@@ -1,0 +1,34 @@
+{
+  "candidate_iterations": 100,
+  "candidate_seconds": 224.3934253529951,
+  "candidate_nodes": 203401,
+  "candidate_information_sets": 26175,
+  "validation_iterations": 20,
+  "candidate_coverage": {
+    "calling": {
+      "covered": 13,
+      "decisions": 331
+    },
+    "tight": {
+      "covered": 20,
+      "decisions": 123
+    },
+    "aggressive": {
+      "covered": 17,
+      "decisions": 142
+    },
+    "blueprint": {
+      "covered": 16,
+      "decisions": 182
+    },
+    "mixed": {
+      "covered": 14,
+      "decisions": 187
+    },
+    "checkpoint:a52015384a89444f040d1c4d810bb9a68be2a3d569b195ca84fd94fd15708447": {
+      "covered": 16,
+      "decisions": 182
+    }
+  },
+  "interpretation": "Pipeline pilot only. Neither checkpoint is an established strong opponent. No competitive strength or convergence conclusion."
+}

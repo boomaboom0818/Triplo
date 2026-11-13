@@ -1,210 +1,115 @@
-# Bot-first development scope
+# Triplo multiplayer poker
 
-We are building **bot-opponent-v1 first**. It targets diverse competing agents,
-with population self-play, historical checkpoints and eventually evidence-based
-exploitation. Its training config is `configs/train-bot.json`; default output is
-`runs/bot/seed1.json`. Evaluation requires a matching model identity.
+Bot-first six-max no-limit Hold'em research and training pipeline. Development is
+on `develop`; `main` retains the repository initialization. The bot and future
+human model share one codebase. No competitive-strength claim has been established.
 
-**human-opponent-v1 is reserved for later**: it will inherit the validated core
-and add persistent per-player, position/street/sizing-aware adaptation. It will
-have its own training recipe and checkpoints, with the same winnings objective
-and no entertainment or difficulty reduction. No human model has been trained.
-Both targets remain in this codebase and branch; engine and algorithm work is shared.
-The model IDs identify training targets, not distinct neural architectures.
+## Install and test
 
-Current smoke checkpoint:
-
-```sh
-.venv/bin/python -m poker.evaluate --checkpoint artifacts/bot/baseline.json --blocks 10 --config configs/bot.json
-```
-
-# Triplo multiplayer poker research baseline
-
-Working local simulation, training, and evaluation prototype. **Not a competitive poker bot yet.** No strength claim is supported by the included smoke runs. Development branch: `develop`; `main` is the initialization point.
-
-## Install and run
-
-Python 3.11+; CPU only. With uv:
+Python 3.11+ on Linux (writer locks use `fcntl`):
 
 ```sh
 uv venv .venv
 uv pip install --python .venv/bin/python -e '.[test]'
 .venv/bin/python -m pytest -q
-.venv/bin/python -m poker.train --hands 1000 --seed 1 --output runs/bot/seed1.json
-.venv/bin/python -m poker.evaluate --blocks 1000 --seed 100000
-.venv/bin/python -m poker.evaluate --blocks 1000 --seed 100000 --copies 3
 ```
 
-The current bot checkpoint at `artifacts/bot/baseline.json` is only a 200-hand smoke training run. Older root-level artifacts are historical and unassigned. Evaluation JSON files contain actual measurements, sample sizes, wall time, decision latency, and 95% percentile bootstrap intervals. Ten independent deal blocks are far too few for reliable strength conclusions. Wall seconds are measured compute cost; no cloud dollar cost is inferred.
+The suite covers game integration, settlement, action order, privacy, learning
+updates, abstraction invariance, exact resume, resource stops and output locks.
+CI runs the suite and baseline/CFR smoke workflows.
+
+## Train the bot
+
+See the complete [training runbook](docs/TRAINING.md) for resource controls,
+recovery, separate validation training, staged experiments and limitations.
+
+```sh
+.venv/bin/python -m poker.train_cfr --config configs/cfr-bot.json --output runs/bot/candidate.json
+.venv/bin/python -m poker.train_cfr --config configs/cfr-bot-validation.json --output runs/bot/validation.json
+.venv/bin/python -m poker.evaluate --checkpoint runs/bot/candidate.json --opponent-checkpoints runs/bot/validation.json --blocks 1000
+.venv/bin/python -m poker.evaluate --checkpoint runs/bot/candidate.json --opponent-checkpoints runs/bot/validation.json --blocks 1000 --copies 3
+```
+
+Training uses external-sampling MCCFR with a versioned coarse abstraction and a
+historical opponent population. Resume restores regrets, average policies, archive
+and RNG state. Every checkpoint identifies its model, algorithm, abstraction,
+configuration and compute usage. New checkpoints also record source file hashes.
+The default configuration bounds each invocation to one hour; it may stop before
+its total target. Review stop reasons and resume with suitable limits.
+
+A staged run retains snapshots and evaluates one and three candidate copies:
+
+```sh
+.venv/bin/python -m poker.experiment --output runs/bot/learning-curve --stages 100 1000 10000 --blocks 1000 --opponent-checkpoints runs/bot/validation.json
+```
+
+A small preflight is available with `python -m poker.preflight --output runs/bot/preflight`.
+It measures coverage and compute; it does not certify competitive readiness.
+
+## Model targets
+
+- `bot-opponent-v1`: active. Diverse-agent robustness and evidence-based exploitation
+  are the objectives. Historical-population training is implemented; validated
+  opponent exploitation remains unfinished.
+- `human-opponent-v1`: reserved and deferred. It will add persistent per-player,
+  position/street/sizing-aware adaptation with the same winnings objective.
+  Human training/evaluation is explicitly blocked until implemented.
+
+Model IDs prevent accidental cross-target checkpoint use. They identify training
+targets, not separate neural architectures. No reduced-difficulty behavior exists.
 
 ## Architecture and API
 
-- `poker/game.py`: trusted PokerKit adapter, integer half-big-blind chips, stacks reset each hand, rotating positional mapping, legal discrete raise menu. Call `play(policies, seed, button)` with 3–6 separately instantiated policy objects. A policy implements `act(observation)` and returns `call`, `fold`, or a legal integer raise-to amount. Payoffs are BB.
-- `poker/policy.py`: stochastic tabular blueprint and benchmark fixtures.
-- `poker/model.py`: independent public-action counts indexed by player, position, street, including sizing. This is not yet connected to action selection.
-- `poker/train.py`: terminal-return REINFORCE over coarse information buckets, mixing historical checkpoints and scripted opponents. No CFR guarantees claimed.
-- `poker/evaluate.py`: held-out deal seeds, seat rotations, candidate copies, population-separated results. Bootstrap resamples whole duplicate-deal blocks, preserving within-block seat and deal dependencies.
-- `configs/`: bot and human configuration declarations. They reserve separate model identities: bot-opponent-v1 is active; human-opponent-v1 is deferred. Both retain the objective of maximizing expected winnings. Human training/evaluation is blocked until implemented; neither model has validated adaptation.
+- `poker/game.py`: trusted PokerKit adapter. `play(policies, seed, button)` accepts
+  3–6 independent objects implementing `act(observation)`. Returns payoffs in BB,
+  decision traces and timings. Policies return `call`, `fold`, or a listed integer
+  raise-to amount. Chips are half-BB units; stacks reset to 100 BB each hand.
+- `poker/abstraction.py`: own-card/public-state buckets. Action slots retain ordering;
+  card and history abstraction is lossy and imperfect recall. See the runbook.
+- `poker/cfr.py`: reference regret traversal, importance-weighted averaging,
+  branching adapter and average-policy inference.
+- `poker/train_cfr.py`: population training, checkpointing, resource budgets,
+  graceful interruption and recovery. Single-process CPU implementation.
+- `poker/evaluate.py`: per-population seat-balanced duplicate-deal evaluation,
+  whole-deal-block bootstrap intervals, sample counts, coverage, latency and time.
+- `poker/model.py`: preliminary opponent statistics, not wired into betting.
+- `poker/policy.py` and `poker/train.py`: earlier tabular REINFORCE baseline, retained
+  separately for comparison. Use `configs/train-bot.json` for that baseline.
 
-Observations are frozen detached records with own hole cards, board, public stacks, active players and public action history. No engine or future deck is passed to policies. This protects ordinary API consumers, not hostile Python code running in the same process. Untrusted external agents require process isolation and serialized observations before deployment. Independent policies have their own RNG and opponent model; do not share model state between seated agents.
+Observations contain own private cards and public state/history only. Independent
+policy instances have separate RNG/model state. Simulator internals are never
+passed to policies, but in-process Python is not a security sandbox. Untrusted
+external agents need process isolation and a serialized protocol before use.
 
-The current action menu is call/check, fold when legal, minimum raise, half-pot, pot and all-in (deduplicated and engine-validated). It does not expose all possible legal no-limit sizes. The state abstraction loses exact bet history and stack sizes, uses coarse private ranks, and retains board ranks without suits. It is severely lossy, imperfect-recall, and unsuitable for a strength claim. Unvisited buckets choose uniformly; policy-gradient learning is high variance and sparse. No LLM selects bets.
+The game engine supports multiple all-ins, side pots, folds down to heads-up and
+configurable stacks. Rake and tournaments are unsupported. Current training and
+evaluation use six players and reset 100-BB stacks. Tests verify several exact
+payout and reopening cases; broader cumulative-short-raise/rules certification and
+public showdown-history integration remain outstanding.
 
-## Engine and research decisions
+## Measured artifacts and limitations
 
-[PokerKit documentation](https://pokerkit.readthedocs.io/en/stable/simulation.html) supplies a maintained no-limit engine, including side-pot and betting mechanics. Version 0.7.7 is pinned. [Its license is MIT](https://github.com/uoftcprg/pokerkit/blob/main/LICENSE); installed distributions retain upstream notices. Engine behavior is covered here by initial integration tests, **not a complete independent rules certification**. The tests include short-all-in reopening, folded blinds, uncalled returns, button rotations and fold-down to heads-up. Exact multiple-side-pot and odd-chip split fixtures are now included; cumulative-short-raise and broader rule coverage remain necessary before trusting large experiments.
+`artifacts/bot/abstract-pilot/` contains an actual 100-iteration candidate, a separate
+20-iteration validation checkpoint, and evaluation reports for one and three copies.
+The snapshots are included so report hashes can be reproduced. This short pilot
+is not a learning curve or evidence of competitive strength. Historical exact-state
+and REINFORCE smoke artifacts are retained in other artifact directories.
 
-[Brown and Sandholm, 2019](https://noambrown.com/papers/19-Science-Superhuman.pdf) and [supplement](https://noambrown.com/papers/19-Science-Superhuman_Supp.pdf) motivate an offline blueprint plus imperfect-information limited-depth search. This implementation is a preliminary learning baseline, not a reproduction. Multiplayer CFR does not inherit two-player zero-sum convergence guarantees.
+Practical abstraction and population training are now implemented, but their
+quality needs multi-seed learning curves and stronger held-out opponents. Coverage
+remains sparse in the pilot. No validated range-aware limited-depth search, live
+adaptation, native accelerated traversal backend or established strong benchmark
+agent is included. Checkpoint opponents are supported; independently trained
+pilots must not be described as strong merely because they are learned agents.
+Multiplayer CFR and imperfect-recall abstractions do not inherit two-player
+zero-sum equilibrium guarantees. No heads-up metric establishes multiplayer strength.
 
-Python and tabular learning were chosen for an inspectable smoke baseline, not because Python happened to be installed. Competitive training needs a profiled native traversal backend, appropriate information abstraction and far larger training. No GPU stack is justified for this table-based baseline; neural methods would require a separate measured design decision.
+## Research and licensing
 
-## Staged work remaining
-
-1. Add exact rule regression cases covering every settlement/reopening edge case, odd-chip seat order, and explicit public showdown observations. Add serialized bot protocol with process isolation.
-2. Implement and validate external-sampling multiplayer MCCFR on a small tractable game, then transfer to hold'em with versioned abstraction, checkpoint resume and population manifests. Current checkpoint schema 1 records engine, abstraction, seed, hand count, table and measured runtime; new checkpoints additionally persist full training state for exact resume on the same runtime; older checkpoints cannot resume.
-3. Add range-conditioned multiway belief sampling and limited-depth search with multiple continuation policies. Never determinize using actual opposing cards or future cards. Validate search against blueprint with independent seeds and paired comparisons.
-4. Wire per-player model updates and shrinkage into conservative adaptation; evaluate both modes with identical strength objectives. Currently neither mode adapts.
-5. Integrate licensed strong held-out agents and genuinely disjoint training/evaluation populations. Current evaluation scripts overlap training styles; held-out seeds alone do not establish population generalization. Test heterogeneous tables and multiple candidate copies, persistence across sessions, longer latency distributions and training cost scaling.
-6. Run preregistered large benchmarks with enough independent deal blocks to resolve a chosen BB/100 effect. Exact competitive compute requirements cannot be known before profiling the implemented CFR/search backend and learning curves. No amount of training the present smoke implementation is guaranteed to produce competitive play.
-
-Rake and tournaments are unsupported. Unequal stacks are supported by the game adapter but not represented adequately by the learner. Multiway activity is bucketed, but strategic interactions and opponent ranges are not yet modeled. There is no heads-up exploitability claim or human-strength evidence.
-
-## Training-ready baseline workflow
-
-Use a new output path for each run. Existing files are protected unless `--resume`
-points to that output, or you explicitly pass `--overwrite`.
-
-```sh
-.venv/bin/python -m pytest -q
-.venv/bin/python -m poker.train --config configs/train-bot.json --hands 10000 --output runs/bot/seed1.json
-# --hands is the TOTAL target, not additional hands:
-.venv/bin/python -m poker.train --config configs/train-bot.json --hands 20000 --resume runs/bot/seed1.json --output runs/bot/seed1.json
-.venv/bin/python -m poker.evaluate --checkpoint runs/bot/seed1.json --blocks 1000 --seed 100000 --config configs/bot.json
-.venv/bin/python -m poker.evaluate --checkpoint runs/bot/seed1.json --blocks 1000 --seed 100000 --copies 3 --config configs/bot.json
-```
-
-`configs/train-bot.json` fixes the seed, population sampling weights (repeated names),
-learning rate, archive retention and checkpoint frequency. Resume requires the same
-configuration. Every 100 completed hands by default, checkpoints are atomically
-replaced, flushed to disk, and accompanied by a `.progress.jsonl` log containing
-completed hands, elapsed training time, information-set count and file size.
-Interrupting a run loses at most the work since its last complete checkpoint;
-restart with `--resume`. Do not run concurrent writers to the same output path.
-
-New checkpoints retain RNG state and historical policy tables as well as metadata,
-Python version, source revision and a config hash. Legacy inference checkpoints
-remain inspectable but are unassigned and rejected by model-specific evaluation/resume. Tests compare uninterrupted and resumed runs
-across archive/checkpoint boundaries. Reproduce on the same Python/dependency
-versions; cross-version bitwise determinism is not promised. The historical tables
-can consume substantial memory/disk; start with a pilot, measure the progress log,
-and budget before increasing duration. No automatic competitive stopping criterion
-exists. All training is CPU-only, single-process; no cloud resources are launched.
-
-`artifacts/training-ready.json` is a historical, unassigned 100+100-hand resume smoke artifact,
-not a trained competitive strategy. CI runs tests plus a short train/resume/evaluate
-cycle. A large training run has deliberately not been started: this baseline is
-ready for reproducible experiments, while MCCFR, search, and validated opponent
-adaptation remain research implementation work. Scale-up should follow those
-algorithmic improvements, not assume more baseline hands establish strength.
-
-## Bot milestone: reference external-sampling MCCFR
-
-The new `poker.cfr` implementation is separate from the policy-gradient baseline.
-It implements regret matching, external-sampling regret traversal, and a separate
-importance-weighted average-policy traversal appropriate for multiple players.
-Strategies are frozen throughout each iteration; chance deals and other players'
-actions are sampled, while all updater actions are explored. It does not use
-Pluribus's pruning, linear weighting, action translation or live search.
-
-```sh
-# Algorithm validation on Kuhn (not a hold'em strength benchmark):
-.venv/bin/python -m poker.train_cfr --game kuhn --iterations 10000 --output runs/bot/kuhn.json
-# Six-max reference pilot; start small and measure:
-.venv/bin/python -m poker.train_cfr --game holdem --iterations 10 --output runs/bot/cfr.json
-.venv/bin/python -m poker.train_cfr --game holdem --iterations 20 --resume runs/bot/cfr.json --output runs/bot/cfr.json
-.venv/bin/python -m poker.evaluate --checkpoint runs/bot/cfr.json --blocks 100 --config configs/bot.json
-```
-
-CFR checkpoints have a distinct algorithm tag and contain regrets, average-policy
-sums, RNG state, configuration, node counts and elapsed compute time. The command
-saves every 100 iterations and at the target; interruption can lose the unfinished
-interval. Evaluation reads the average policy, rejects Kuhn checkpoints, and uses
-uniform actions at unseen information sets. The existing baseline checkpoints
-remain compatible with evaluation. Do not compare iteration counts with baseline
-hand counts: each CFR iteration traverses many counterfactual branches.
-
-The Hold'em reference key contains only own cards and observed public history,
-including exact legal action amounts, board suits and stack sizes. It retains
-recall but creates a huge sparse table. It is intentionally a correctness reference,
-not a practical competitive abstraction. Full-deck exact-key training is unlikely
-to generalize to unseen deals. Do not allocate a substantial training budget yet.
-The CFR trainer currently uses current-policy self-play only; historical-population
-mixing remains in the older policy-gradient trainer and is not yet ported to CFR.
-
-Tests cover analytic three-player regret and averaging weights, branch isolation,
-private-card information boundaries, exact resume, and the known two-player Kuhn
-value. The latter validates a small algorithm case; it is **not** multiplayer
-exploitability or strength evidence. `artifacts/bot/cfr-smoke.json` records one
-actual six-player iteration. The next work is bounded practical abstractions,
-strong held-out opponents and range-aware search, with profiling before scale-up.
-
-Algorithm reference: [Lanctot et al., Monte Carlo Sampling for Regret Minimization
-in Extensive Games](https://www.mlanctot.info/files/papers/nips09mccfr_techreport.pdf).
-The implementation here is original project code; no third-party algorithm source
-was copied. Multiplayer equilibrium guarantees are not inferred from the
-paper's two-player zero-sum equilibrium results.
-
-## Unattended CFR run controls and readiness gate
-
-Run the measured preflight in a **new directory** before allocating substantial
-compute:
-
-```sh
-.venv/bin/python -m pytest -q
-.venv/bin/python -m poker.preflight --output runs/bot/preflight --iterations 10
-```
-
-Its report includes actual traversal time, node count, checkpoint size and
-average-policy table coverage on ten independently seeded held-out deals. Coverage
-is diagnostic, not a win-rate or strength metric. The report explicitly distinguishes
-operational completion from readiness for competitive full training.
-
-The bot run configuration is `configs/cfr-bot.json`:
-
-```sh
-.venv/bin/python -m poker.train_cfr --config configs/cfr-bot.json --output runs/bot/cfr.json
-.venv/bin/python -m poker.train_cfr --config configs/cfr-bot.json --resume runs/bot/cfr.json --output runs/bot/cfr.json
-```
-
-The JSON config is authoritative for all training settings; when supplied, only
-CLI output/resume arguments remain independent. Its initial limits are 10,000 total
-iterations, ten-iteration checkpoint intervals, 100,000 nodes per iteration,
-one hour per invocation and 500,000 information sets. These are protective pilot
-limits, **not empirically justified competitive training requirements**. Increase
-limits in the configuration only after reviewing the pilot. Resume preserves the
-seed/game/player configuration; resource budgets may be changed. Completed target
-runs need a larger total iteration target to resume.
-
-SIGINT/SIGTERM or a traversal limit rolls back the current iteration (including RNG
-and average-policy updates), then saves the last complete state. No partial
-iteration is silently accepted. Repeated node-limit stops need an increased node
-budget or backend changes; resume does not skip the difficult traversal. Time
-limits are checked per node, so slow engine operations and checkpoint serialization
-can overrun the wall-time budget. Information-set limits are checked between
-iterations and can overshoot by one iteration; this is not a hard RAM limit.
-Use an external OS memory limit if needed; an OOM/SIGKILL cannot save progress.
-
-Each output is protected by a Linux advisory writer lock. A `.previous` checkpoint
-retains the previous save, and JSONL logs include iteration/node counts, elapsed
-time, table size, checkpoint bytes and stop reason. To recover, resume from the
-`.previous` file into a new output path. Keep checkpoints and logs on a filesystem
-with enough free space for current, previous and temporary copies. Locks guard
-cooperating local trainers, not arbitrary external writers or all network filesystems.
-Atomic replacement protects against incomplete file writes; no storage hardware
-failure guarantee is implied.
-
-Remaining full-training blockers are practical abstraction/generalization,
-strong held-out populations, and a measured learning curve. Search and population
-training are also still incomplete. The present controls make experiments bounded
-and recoverable; they do not turn the exact-state reference algorithm into a
-competitive production trainer.
+[PokerKit](https://pokerkit.readthedocs.io/en/stable/simulation.html) 0.7.7 supplies
+the game engine under its [MIT license](https://github.com/uoftcprg/pokerkit/blob/main/LICENSE).
+Installed distributions retain upstream notices. Algorithms here are original
+project implementations informed by [Lanctot et al.'s MCCFR paper](https://www.mlanctot.info/files/papers/nips09mccfr_techreport.pdf)
+and [Brown and Sandholm's Pluribus paper](https://noambrown.com/papers/19-Science-Superhuman.pdf).
+This is not a Pluribus reproduction. Python was chosen for an inspectable reference;
+profile throughput, table growth and learning before budgeting larger compute.

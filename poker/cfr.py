@@ -8,6 +8,7 @@ incorrect multiplayer 'simple averaging' shortcut.
 import copy
 import time
 from random import Random
+from .abstraction import bucket_key,VERSION
 
 
 def normalize(weights):
@@ -26,6 +27,7 @@ class MCCFR:
         self.nodes=0
 
     def visit(self):
+        if getattr(self,"stop_requested",lambda:False)():raise KeyboardInterrupt
         self.nodes+=1
         if getattr(self,"node_limit",None) is not None and self.nodes>self.node_limit:
             raise TraversalLimit("iteration node budget exceeded")
@@ -43,6 +45,8 @@ class MCCFR:
         actor,key,actions=state.info()
         strategy=self.strategy(key,actions)
         if actor!=updater:
+            frozen=getattr(self,'opponents',{}).get(actor)
+            if frozen is not None:strategy=normalize(frozen.get(key,[0.0]*len(actions)))
             return self.regret(state.child(self.rng.choices(actions,strategy)[0]),updater,delta)
         values=[self.regret(state.child(a),updater,delta) for a in actions]
         value=sum(p*v for p,v in zip(strategy,values))
@@ -62,8 +66,9 @@ class MCCFR:
         else:
             self.average(state.child(self.rng.choice(actions)),owner,own_reach,inverse_sample*len(actions))
 
-    def step(self,factory,players,max_nodes=None,deadline=None):
+    def step(self,factory,players,max_nodes=None,deadline=None,opponents=None):
         # An interrupted traversal must not leak partial averages or RNG state.
+        self.opponents=opponents or {}
         rng_state=self.rng.getstate(); old_nodes=self.nodes
         self.node_limit=None if max_nodes is None else self.nodes+max_nodes
         self.deadline=deadline; self.pending_sums={};delta={}
@@ -104,14 +109,14 @@ class Kuhn:
 
 
 class Holdem:
-    def __init__(self,seed,players=6):
+    def __init__(self,seed,players=6,abstraction="exact-observation-v1"):
         from .game import Game
-        self.game=Game(seed,players)
+        self.game=Game(seed,players);self.abstraction=abstraction
     def terminal(self):return not self.game.state.status
     def returns(self):return self.game.payoff()
     def info(self):
         o=self.game.observe()
-        return o.player,holdem_key(o),o.legal
+        return o.player,information_key(o,self.abstraction),o.legal
     def child(self,action):
         result=copy.deepcopy(self);result.game.act(action);return result
 
@@ -124,9 +129,16 @@ def holdem_key(o):
                        o.active,o.pot,o.call,o.street,o.legal,o.history),separators=(',',':'))
 
 
+def information_key(o,abstraction):
+    if abstraction=='exact-observation-v1':return holdem_key(o)
+    if abstraction==VERSION:return bucket_key(o)
+    raise ValueError('unsupported abstraction')
+
+
 class CFRPolicy:
-    def __init__(self,sums,seed=0):self.sums=sums;self.rng=Random(seed)
+    def __init__(self,sums,seed=0,abstraction="exact-observation-v1"):
+        self.sums=sums;self.rng=Random(seed);self.abstraction=abstraction
     def act(self,o):
-        row=self.sums.get(holdem_key(o),[0.0]*len(o.legal))
+        row=self.sums.get(information_key(o,self.abstraction),[0.0]*len(o.legal))
         if len(row)!=len(o.legal):raise ValueError('information-set action mismatch')
         return self.rng.choices(o.legal,normalize(row))[0]

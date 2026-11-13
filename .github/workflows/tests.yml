@@ -15,3 +15,4 @@ jobs:
       - run: python -m poker.evaluate --checkpoint /tmp/smoke.json --blocks 2
       - run: python -m poker.train_cfr --game kuhn --iterations 10 --output /tmp/cfr.json
       - run: python -m poker.train_cfr --game kuhn --iterations 20 --resume /tmp/cfr.json --output /tmp/cfr.json
+      - run: python -m poker.experiment --output /tmp/staged-cfr --stages 1 2 --blocks 2

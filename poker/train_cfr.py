@@ -8,10 +8,15 @@ import signal
 import subprocess
 import fcntl
 import shutil
+import copy
+import hashlib
+from .abstraction import VERSION
 from contextlib import contextmanager
 from pathlib import Path
 from .cfr import MCCFR,Kuhn,Holdem,TraversalLimit
 from .train import atomic_save,tuples
+
+_STOP_REQUESTED=False
 
 
 @contextmanager
@@ -25,42 +30,52 @@ def run_lock(path):
 
 def train(iterations,path,seed=1,game='kuhn',players=6,resume=None,*,
           checkpoint_every=100,max_iteration_nodes=100000,max_seconds=3600,
-          max_information_sets=500000):
+          max_information_sets=500000,abstraction="exact-observation-v1",
+          population_probability=0.0,archive_every=100,archive_size=4):
     with run_lock(path):
         return _train(iterations,path,seed,game,players,resume,checkpoint_every,
-                      max_iteration_nodes,max_seconds,max_information_sets)
+                      max_iteration_nodes,max_seconds,max_information_sets,abstraction,
+                      population_probability,archive_every,archive_size)
 
 
 def _train(iterations,path,seed,game,players,resume,checkpoint_every,
-           max_iteration_nodes,max_seconds,max_information_sets):
-    for value in (checkpoint_every,max_iteration_nodes,max_information_sets):
+           max_iteration_nodes,max_seconds,max_information_sets,abstraction,
+           population_probability,archive_every,archive_size):
+    if abstraction not in ("exact-observation-v1",VERSION):raise ValueError("unsupported abstraction")
+    if not 0<=population_probability<=1:raise ValueError("invalid population probability")
+    for value in (checkpoint_every,max_iteration_nodes,max_information_sets,archive_every,archive_size):
         if type(value) is not int or value<1:raise ValueError('limits must be positive integers')
     if not math.isfinite(max_seconds) or max_seconds<=0:raise ValueError('invalid time budget')
     if iterations<1 or game not in ('kuhn','holdem') or not 3<=players<=6:
         raise ValueError('invalid training configuration')
-    config=dict(game=game,players=2 if game=='kuhn' else players,seed=seed)
+    config=dict(game=game,players=2 if game=='kuhn' else players,seed=seed,
+                abstraction=abstraction,population_probability=population_probability,
+                archive_every=archive_every,archive_size=archive_size)
     if Path(path).exists() and (resume is None or Path(path).resolve()!=Path(resume).resolve()):
         raise ValueError('output exists; use resume or a new path')
-    solver=MCCFR(seed);seconds=0
+    solver=MCCFR(seed);seconds=0;archive=[]
+    solver.stop_requested=lambda: _STOP_REQUESTED
     if resume:
         saved=json.loads(Path(resume).read_text())
         if (saved.get('schema')!=1 or saved.get('algorithm')!='external-sampling-mccfr-v1'
                 or saved.get('config')!=config or saved.get('model_id')!='bot-opponent-v1'):
             raise ValueError('incompatible CFR checkpoint')
-        solver.regrets=saved['regrets'];solver.sums=saved['sums']
+        solver.regrets=saved['regrets'];solver.sums=saved['sums'];archive=saved['archive']
         solver.rng.setstate(tuples(saved['rng']));solver.iterations=saved['iterations']
         solver.nodes=saved['nodes'];seconds=saved['seconds']
     if iterations<=solver.iterations:raise ValueError('target must exceed completed iterations')
     try:revision=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
     except (OSError,subprocess.CalledProcessError):revision='unknown'
+    source_hashes={p.name:hashlib.sha256(p.read_bytes()).hexdigest()
+                   for p in sorted(Path(__file__).parent.glob('*.py'))}
     start=time.perf_counter();deadline=time.monotonic()+max_seconds
     stop_reason='running'
     def save():
         result=dict(schema=1,algorithm='external-sampling-mccfr-v1',model_id='bot-opponent-v1',
-                    config=config,engine='pokerkit-0.7.7',abstraction='exact-observation-v1',
+                    config=config,engine='pokerkit-0.7.7',abstraction=abstraction,archive=archive,
                     iterations=solver.iterations,regrets=solver.regrets,sums=solver.sums,
                     rng=solver.rng.getstate(),nodes=solver.nodes,seconds=seconds+time.perf_counter()-start,
-                    stop_reason=stop_reason,provenance=dict(revision=revision,python=platform.python_version()),
+                    stop_reason=stop_reason,provenance=dict(revision=revision,python=platform.python_version(),source_sha256=source_hashes),
                     limits=dict(max_iteration_nodes=max_iteration_nodes,max_seconds=max_seconds,
                                 max_information_sets=max_information_sets,checkpoint_every=checkpoint_every))
         # Keep the last complete checkpoint as recovery if replacement/disk write fails.
@@ -73,12 +88,24 @@ def _train(iterations,path,seed,game,players,resume,checkpoint_every,
         with Path(str(path)+'.progress.jsonl').open('a') as log:log.write(json.dumps(record)+'\n')
         print(json.dumps(record),flush=True)
         return result
-    factory=Kuhn if game=='kuhn' else lambda seed:Holdem(seed,players)
+    factory=Kuhn if game=='kuhn' else lambda seed:Holdem(seed,players,abstraction)
     try:
         for _ in range(solver.iterations,iterations):
+            if _STOP_REQUESTED:raise KeyboardInterrupt
             if len(set(solver.regrets)|set(solver.sums))>=max_information_sets:
                 stop_reason='information_set_budget';break
-            solver.step(factory,config['players'],max_iteration_nodes,deadline)
+            # Snapshot RNG before population selection for exact interrupted resume.
+            rng_before=solver.rng.getstate()
+            opponents={}
+            if archive:
+                for player in range(config['players']):
+                    if solver.rng.random()<population_probability:
+                        opponents[player]=solver.rng.choice(archive)
+            try:solver.step(factory,config['players'],max_iteration_nodes,deadline,opponents)
+            except BaseException:
+                solver.rng.setstate(rng_before);raise
+            if solver.iterations%archive_every==0:
+                archive.append(copy.deepcopy(solver.sums));archive=archive[-archive_size:]
             if solver.iterations%checkpoint_every==0 and solver.iterations<iterations:save()
     except TraversalLimit as exc:stop_reason=str(exc)
     except KeyboardInterrupt:stop_reason='interrupted'
@@ -87,7 +114,8 @@ def _train(iterations,path,seed,game,players,resume,checkpoint_every,
 
 
 def stop_signal(signum,frame):
-    raise KeyboardInterrupt
+    global _STOP_REQUESTED
+    _STOP_REQUESTED=True
 
 
 if __name__=='__main__':
@@ -101,13 +129,20 @@ if __name__=='__main__':
     p.add_argument('--max-iteration-nodes',type=int,default=100000)
     p.add_argument('--max-seconds',type=float,default=3600)
     p.add_argument('--max-information-sets',type=int,default=500000)
+    p.add_argument('--abstraction',choices=['exact-observation-v1',VERSION],default='exact-observation-v1')
+    p.add_argument('--population-probability',type=float,default=0.0)
+    p.add_argument('--archive-every',type=int,default=100)
+    p.add_argument('--archive-size',type=int,default=4)
     a=p.parse_args()
     settings=dict(iterations=a.iterations,seed=a.seed,game=a.game,players=a.players,
                   checkpoint_every=a.checkpoint_every,max_iteration_nodes=a.max_iteration_nodes,
-                  max_seconds=a.max_seconds,max_information_sets=a.max_information_sets)
+                  max_seconds=a.max_seconds,max_information_sets=a.max_information_sets,
+                  abstraction=a.abstraction,population_probability=a.population_probability,
+                  archive_every=a.archive_every,archive_size=a.archive_size)
     if a.config:
         cfg=json.loads(Path(a.config).read_text())
         if cfg.pop('schema',None)!=1 or set(cfg)!=set(settings):raise ValueError('invalid CFR run config')
         settings=cfg  # Run configuration is authoritative; CLI output/resume remain independent.
     signal.signal(signal.SIGTERM,stop_signal)
+    signal.signal(signal.SIGINT,stop_signal)
     train(path=a.output,resume=a.resume,**settings)

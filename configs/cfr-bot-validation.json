@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "game": "holdem",
+  "players": 6,
+  "seed": 900001,
+  "iterations": 10000,
+  "checkpoint_every": 10,
+  "max_iteration_nodes": 100000,
+  "max_seconds": 3600,
+  "max_information_sets": 500000,
+  "abstraction": "texture-buckets-v1",
+  "population_probability": 0.0,
+  "archive_every": 100,
+  "archive_size": 4
+}

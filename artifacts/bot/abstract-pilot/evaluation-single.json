@@ -1,0 +1,117 @@
+{
+  "checkpoint_sha256": "351cbc859e2b4a83deec3efe67b96d200694bffa83575527ba92539654fa6dd4",
+  "opponent_checkpoint_hashes": [
+    "checkpoint:a52015384a89444f040d1c4d810bb9a68be2a3d569b195ca84fd94fd15708447"
+  ],
+  "algorithm": "external-sampling-mccfr-v1",
+  "config": {
+    "schema": 1,
+    "mode": "bot",
+    "policy": "blueprint",
+    "adaptation": "disabled_pending_validation",
+    "model_id": "bot-opponent-v1",
+    "status": "active",
+    "objective": "maximize_expected_winnings"
+  },
+  "seed": 100000,
+  "copies": 1,
+  "populations": {
+    "calling": {
+      "bb_per_100": -144.99999999999994,
+      "ci95_cluster_bootstrap": [
+        -1827.0833333333333,
+        1500.8333333333333
+      ],
+      "independent_deal_blocks": 20,
+      "table_hands": 120,
+      "candidate_hands": 120,
+      "candidate_decisions": 331,
+      "covered_candidate_decisions": 13,
+      "policy_coverage": 0.03927492447129909,
+      "decision_p95_ms": 0.12620200868695974,
+      "decision_mean_ms": 0.02034022005687524,
+      "wall_seconds": 2.5670220269967103
+    },
+    "tight": {
+      "bb_per_100": 107.5,
+      "ci95_cluster_bootstrap": [
+        100.0,
+        115.0
+      ],
+      "independent_deal_blocks": 20,
+      "table_hands": 120,
+      "candidate_hands": 120,
+      "candidate_decisions": 123,
+      "covered_candidate_decisions": 20,
+      "policy_coverage": 0.16260162601626016,
+      "decision_p95_ms": 0.042355997720733285,
+      "decision_mean_ms": 0.007939194929153879,
+      "wall_seconds": 0.28311051600030623
+    },
+    "aggressive": {
+      "bb_per_100": 819.5833333333334,
+      "ci95_cluster_bootstrap": [
+        -1221.6666666666665,
+        2803.3333333333335
+      ],
+      "independent_deal_blocks": 20,
+      "table_hands": 120,
+      "candidate_hands": 120,
+      "candidate_decisions": 142,
+      "covered_candidate_decisions": 17,
+      "policy_coverage": 0.11971830985915492,
+      "decision_p95_ms": 0.04063200321979821,
+      "decision_mean_ms": 0.008127900293723489,
+      "wall_seconds": 0.7344273909984622
+    },
+    "blueprint": {
+      "bb_per_100": 355.4166666666667,
+      "ci95_cluster_bootstrap": [
+        -1157.5,
+        1970.4166666666667
+      ],
+      "independent_deal_blocks": 20,
+      "table_hands": 120,
+      "candidate_hands": 120,
+      "candidate_decisions": 182,
+      "covered_candidate_decisions": 16,
+      "policy_coverage": 0.08791208791208792,
+      "decision_p95_ms": 0.040875005652196705,
+      "decision_mean_ms": 0.018701592399674942,
+      "wall_seconds": 0.8709292009880301
+    },
+    "mixed": {
+      "bb_per_100": 55.83333333333322,
+      "ci95_cluster_bootstrap": [
+        -1726.2500000000002,
+        1856.6666666666665
+      ],
+      "independent_deal_blocks": 20,
+      "table_hands": 120,
+      "candidate_hands": 120,
+      "candidate_decisions": 187,
+      "covered_candidate_decisions": 14,
+      "policy_coverage": 0.0748663101604278,
+      "decision_p95_ms": 0.04239000554662198,
+      "decision_mean_ms": 0.008227283435637955,
+      "wall_seconds": 0.9685977800108958
+    },
+    "checkpoint:a52015384a89444f040d1c4d810bb9a68be2a3d569b195ca84fd94fd15708447": {
+      "bb_per_100": 438.75,
+      "ci95_cluster_bootstrap": [
+        -1093.3333333333333,
+        2104.583333333333
+      ],
+      "independent_deal_blocks": 20,
+      "table_hands": 120,
+      "candidate_hands": 120,
+      "candidate_decisions": 182,
+      "covered_candidate_decisions": 16,
+      "policy_coverage": 0.08791208791208792,
+      "decision_p95_ms": 0.042567000491544604,
+      "decision_mean_ms": 0.032622360596594444,
+      "wall_seconds": 0.9074128289939836
+    }
+  },
+  "warning": "Smoke benchmark only; no strong held-out opponent integrated."
+}
