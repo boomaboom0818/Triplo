@@ -32,7 +32,7 @@ The current action menu is call/check, fold when legal, minimum raise, half-pot,
 
 ## Engine and research decisions
 
-[PokerKit documentation](https://pokerkit.readthedocs.io/en/stable/simulation.html) supplies a maintained no-limit engine, including side-pot and betting mechanics. Version 0.7.7 is pinned. [Its license is MIT](https://github.com/uoftcprg/pokerkit/blob/main/LICENSE); installed distributions retain upstream notices. Engine behavior is covered here by initial integration tests, **not a complete independent rules certification**. The 19 tests include short-all-in reopening, folded blinds, uncalled returns, button rotations and fold-down to heads-up. Exact multi-side-pot, cumulative-short-raise, split-pot and odd-chip fixtures remain necessary before trusting large experiments.
+[PokerKit documentation](https://pokerkit.readthedocs.io/en/stable/simulation.html) supplies a maintained no-limit engine, including side-pot and betting mechanics. Version 0.7.7 is pinned. [Its license is MIT](https://github.com/uoftcprg/pokerkit/blob/main/LICENSE); installed distributions retain upstream notices. Engine behavior is covered here by initial integration tests, **not a complete independent rules certification**. The tests include short-all-in reopening, folded blinds, uncalled returns, button rotations and fold-down to heads-up. Exact multiple-side-pot and odd-chip split fixtures are now included; cumulative-short-raise and broader rule coverage remain necessary before trusting large experiments.
 
 [Brown and Sandholm, 2019](https://noambrown.com/papers/19-Science-Superhuman.pdf) and [supplement](https://noambrown.com/papers/19-Science-Superhuman_Supp.pdf) motivate an offline blueprint plus imperfect-information limited-depth search. This implementation is a preliminary learning baseline, not a reproduction. Multiplayer CFR does not inherit two-player zero-sum convergence guarantees.
 
@@ -41,10 +41,48 @@ Python and tabular learning were chosen for an inspectable smoke baseline, not b
 ## Staged work remaining
 
 1. Add exact rule regression cases covering every settlement/reopening edge case, odd-chip seat order, and explicit public showdown observations. Add serialized bot protocol with process isolation.
-2. Implement and validate external-sampling multiplayer MCCFR on a small tractable game, then transfer to hold'em with versioned abstraction, checkpoint resume and population manifests. Current checkpoint schema 1 records engine, abstraction, seed, hand count, table and measured runtime; it cannot resume an identical training trajectory.
+2. Implement and validate external-sampling multiplayer MCCFR on a small tractable game, then transfer to hold'em with versioned abstraction, checkpoint resume and population manifests. Current checkpoint schema 1 records engine, abstraction, seed, hand count, table and measured runtime; new checkpoints additionally persist full training state for exact resume on the same runtime; older checkpoints cannot resume.
 3. Add range-conditioned multiway belief sampling and limited-depth search with multiple continuation policies. Never determinize using actual opposing cards or future cards. Validate search against blueprint with independent seeds and paired comparisons.
 4. Wire per-player model updates and shrinkage into conservative adaptation; evaluate both modes with identical strength objectives. Currently neither mode adapts.
 5. Integrate licensed strong held-out agents and genuinely disjoint training/evaluation populations. Current evaluation scripts overlap training styles; held-out seeds alone do not establish population generalization. Test heterogeneous tables and multiple candidate copies, persistence across sessions, longer latency distributions and training cost scaling.
 6. Run preregistered large benchmarks with enough independent deal blocks to resolve a chosen BB/100 effect. Exact competitive compute requirements cannot be known before profiling the implemented CFR/search backend and learning curves. No amount of training the present smoke implementation is guaranteed to produce competitive play.
 
 Rake and tournaments are unsupported. Unequal stacks are supported by the game adapter but not represented adequately by the learner. Multiway activity is bucketed, but strategic interactions and opponent ranges are not yet modeled. There is no heads-up exploitability claim or human-strength evidence.
+
+## Training-ready baseline workflow
+
+Use a new output path for each run. Existing files are protected unless `--resume`
+points to that output, or you explicitly pass `--overwrite`.
+
+```sh
+.venv/bin/python -m pytest -q
+.venv/bin/python -m poker.train --config configs/train.json --hands 10000 --output runs/seed1.json
+# --hands is the TOTAL target, not additional hands:
+.venv/bin/python -m poker.train --config configs/train.json --hands 20000 --resume runs/seed1.json --output runs/seed1.json
+.venv/bin/python -m poker.evaluate --checkpoint runs/seed1.json --blocks 1000 --seed 100000 --config configs/bot.json
+.venv/bin/python -m poker.evaluate --checkpoint runs/seed1.json --blocks 1000 --seed 100000 --copies 3 --config configs/human.json
+```
+
+`configs/train.json` fixes the seed, population sampling weights (repeated names),
+learning rate, archive retention and checkpoint frequency. Resume requires the same
+configuration. Every 100 completed hands by default, checkpoints are atomically
+replaced, flushed to disk, and accompanied by a `.progress.jsonl` log containing
+completed hands, elapsed training time, information-set count and file size.
+Interrupting a run loses at most the work since its last complete checkpoint;
+restart with `--resume`. Do not run concurrent writers to the same output path.
+
+New checkpoints retain RNG state and historical policy tables as well as metadata,
+Python version, source revision and a config hash. Legacy inference checkpoints
+remain readable but cannot resume. Tests compare uninterrupted and resumed runs
+across archive/checkpoint boundaries. Reproduce on the same Python/dependency
+versions; cross-version bitwise determinism is not promised. The historical tables
+can consume substantial memory/disk; start with a pilot, measure the progress log,
+and budget before increasing duration. No automatic competitive stopping criterion
+exists. All training is CPU-only, single-process; no cloud resources are launched.
+
+`artifacts/training-ready.json` is an actual 100+100-hand resume smoke artifact,
+not a trained competitive strategy. CI runs tests plus a short train/resume/evaluate
+cycle. A large training run has deliberately not been started: this baseline is
+ready for reproducible experiments, while MCCFR, search, and validated opponent
+adaptation remain research implementation work. Scale-up should follow those
+algorithmic improvements, not assume more baseline hands establish strength.
