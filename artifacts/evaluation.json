@@ -1,0 +1,55 @@
+{
+  "seed": 100000,
+  "copies": 1,
+  "populations": {
+    "calling": {
+      "bb_per_100": 573.3333333333334,
+      "ci95_cluster_bootstrap": [
+        -1338.3333333333335,
+        2295.8333333333335
+      ],
+      "independent_deal_blocks": 10,
+      "table_hands": 60,
+      "candidate_hands": 60,
+      "decision_mean_ms": 0.001881488163769379,
+      "wall_seconds": 0.7627252689999295
+    },
+    "tight": {
+      "bb_per_100": 112.5,
+      "ci95_cluster_bootstrap": [
+        100.0,
+        122.5
+      ],
+      "independent_deal_blocks": 10,
+      "table_hands": 60,
+      "candidate_hands": 60,
+      "decision_mean_ms": 0.0023911812459118664,
+      "wall_seconds": 0.08652714599884348
+    },
+    "aggressive": {
+      "bb_per_100": 671.6666666666665,
+      "ci95_cluster_bootstrap": [
+        -1525.0,
+        3268.333333333333
+      ],
+      "independent_deal_blocks": 10,
+      "table_hands": 60,
+      "candidate_hands": 60,
+      "decision_mean_ms": 0.0026346234900254447,
+      "wall_seconds": 0.21687297700555064
+    },
+    "blueprint": {
+      "bb_per_100": 985.0,
+      "ci95_cluster_bootstrap": [
+        -1855.8333333333333,
+        3490.8333333333335
+      ],
+      "independent_deal_blocks": 10,
+      "table_hands": 60,
+      "candidate_hands": 60,
+      "decision_mean_ms": 0.008594952338744438,
+      "wall_seconds": 0.26703075700061163
+    }
+  },
+  "warning": "Smoke benchmark only; no strong held-out opponent integrated."
+}
