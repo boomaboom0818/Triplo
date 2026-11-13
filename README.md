@@ -1,3 +1,23 @@
+# Bot-first development scope
+
+We are building **bot-opponent-v1 first**. It targets diverse competing agents,
+with population self-play, historical checkpoints and eventually evidence-based
+exploitation. Its training config is `configs/train-bot.json`; default output is
+`runs/bot/seed1.json`. Evaluation requires a matching model identity.
+
+**human-opponent-v1 is reserved for later**: it will inherit the validated core
+and add persistent per-player, position/street/sizing-aware adaptation. It will
+have its own training recipe and checkpoints, with the same winnings objective
+and no entertainment or difficulty reduction. No human model has been trained.
+Both targets remain in this codebase and branch; engine and algorithm work is shared.
+The model IDs identify training targets, not distinct neural architectures.
+
+Current smoke checkpoint:
+
+```sh
+.venv/bin/python -m poker.evaluate --checkpoint artifacts/bot/baseline.json --blocks 10 --config configs/bot.json
+```
+
 # Triplo multiplayer poker research baseline
 
 Working local simulation, training, and evaluation prototype. **Not a competitive poker bot yet.** No strength claim is supported by the included smoke runs. Development branch: `develop`; `main` is the initialization point.
@@ -10,12 +30,12 @@ Python 3.11+; CPU only. With uv:
 uv venv .venv
 uv pip install --python .venv/bin/python -e '.[test]'
 .venv/bin/python -m pytest -q
-.venv/bin/python -m poker.train --hands 1000 --seed 1 --output artifacts/baseline.json
+.venv/bin/python -m poker.train --hands 1000 --seed 1 --output runs/bot/seed1.json
 .venv/bin/python -m poker.evaluate --blocks 1000 --seed 100000
 .venv/bin/python -m poker.evaluate --blocks 1000 --seed 100000 --copies 3
 ```
 
-The committed checkpoint is only a 200-hand smoke training run. Evaluation JSON files contain actual measurements, sample sizes, wall time, decision latency, and 95% percentile bootstrap intervals. Ten independent deal blocks are far too few for reliable strength conclusions. Wall seconds are measured compute cost; no cloud dollar cost is inferred.
+The current bot checkpoint at `artifacts/bot/baseline.json` is only a 200-hand smoke training run. Older root-level artifacts are historical and unassigned. Evaluation JSON files contain actual measurements, sample sizes, wall time, decision latency, and 95% percentile bootstrap intervals. Ten independent deal blocks are far too few for reliable strength conclusions. Wall seconds are measured compute cost; no cloud dollar cost is inferred.
 
 ## Architecture and API
 
@@ -24,7 +44,7 @@ The committed checkpoint is only a 200-hand smoke training run. Evaluation JSON 
 - `poker/model.py`: independent public-action counts indexed by player, position, street, including sizing. This is not yet connected to action selection.
 - `poker/train.py`: terminal-return REINFORCE over coarse information buckets, mixing historical checkpoints and scripted opponents. No CFR guarantees claimed.
 - `poker/evaluate.py`: held-out deal seeds, seat rotations, candidate copies, population-separated results. Bootstrap resamples whole duplicate-deal blocks, preserving within-block seat and deal dependencies.
-- `configs/`: bot and human configuration declarations. Both use exactly the same policy. Evaluation loads them with `--config configs/bot.json` or `--config configs/human.json`. Neither has validated adaptation.
+- `configs/`: bot and human configuration declarations. They reserve separate model identities: bot-opponent-v1 is active; human-opponent-v1 is deferred. Both retain the objective of maximizing expected winnings. Human training/evaluation is blocked until implemented; neither model has validated adaptation.
 
 Observations are frozen detached records with own hole cards, board, public stacks, active players and public action history. No engine or future deck is passed to policies. This protects ordinary API consumers, not hostile Python code running in the same process. Untrusted external agents require process isolation and serialized observations before deployment. Independent policies have their own RNG and opponent model; do not share model state between seated agents.
 
@@ -56,14 +76,14 @@ points to that output, or you explicitly pass `--overwrite`.
 
 ```sh
 .venv/bin/python -m pytest -q
-.venv/bin/python -m poker.train --config configs/train.json --hands 10000 --output runs/seed1.json
+.venv/bin/python -m poker.train --config configs/train-bot.json --hands 10000 --output runs/bot/seed1.json
 # --hands is the TOTAL target, not additional hands:
-.venv/bin/python -m poker.train --config configs/train.json --hands 20000 --resume runs/seed1.json --output runs/seed1.json
-.venv/bin/python -m poker.evaluate --checkpoint runs/seed1.json --blocks 1000 --seed 100000 --config configs/bot.json
-.venv/bin/python -m poker.evaluate --checkpoint runs/seed1.json --blocks 1000 --seed 100000 --copies 3 --config configs/human.json
+.venv/bin/python -m poker.train --config configs/train-bot.json --hands 20000 --resume runs/bot/seed1.json --output runs/bot/seed1.json
+.venv/bin/python -m poker.evaluate --checkpoint runs/bot/seed1.json --blocks 1000 --seed 100000 --config configs/bot.json
+.venv/bin/python -m poker.evaluate --checkpoint runs/bot/seed1.json --blocks 1000 --seed 100000 --copies 3 --config configs/bot.json
 ```
 
-`configs/train.json` fixes the seed, population sampling weights (repeated names),
+`configs/train-bot.json` fixes the seed, population sampling weights (repeated names),
 learning rate, archive retention and checkpoint frequency. Resume requires the same
 configuration. Every 100 completed hands by default, checkpoints are atomically
 replaced, flushed to disk, and accompanied by a `.progress.jsonl` log containing
@@ -73,14 +93,14 @@ restart with `--resume`. Do not run concurrent writers to the same output path.
 
 New checkpoints retain RNG state and historical policy tables as well as metadata,
 Python version, source revision and a config hash. Legacy inference checkpoints
-remain readable but cannot resume. Tests compare uninterrupted and resumed runs
+remain inspectable but are unassigned and rejected by model-specific evaluation/resume. Tests compare uninterrupted and resumed runs
 across archive/checkpoint boundaries. Reproduce on the same Python/dependency
 versions; cross-version bitwise determinism is not promised. The historical tables
 can consume substantial memory/disk; start with a pilot, measure the progress log,
 and budget before increasing duration. No automatic competitive stopping criterion
 exists. All training is CPU-only, single-process; no cloud resources are launched.
 
-`artifacts/training-ready.json` is an actual 100+100-hand resume smoke artifact,
+`artifacts/training-ready.json` is a historical, unassigned 100+100-hand resume smoke artifact,
 not a trained competitive strategy. CI runs tests plus a short train/resume/evaluate
 cycle. A large training run has deliberately not been started: this baseline is
 ready for reproducible experiments, while MCCFR, search, and validated opponent

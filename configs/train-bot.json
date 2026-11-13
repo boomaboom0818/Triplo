@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "players": 6,
+  "seed": 1,
+  "learning_rate": 0.02,
+  "checkpoint_every": 100,
+  "archive_every": 100,
+  "archive_size": 8,
+  "population": [
+    "blueprint",
+    "blueprint",
+    "calling",
+    "aggressive"
+  ],
+  "model_id": "bot-opponent-v1"
+}

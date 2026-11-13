@@ -13,7 +13,7 @@ from .game import play
 from .policy import Policy, key
 from .config import load_checkpoint
 
-DEFAULT = dict(schema=1, players=6, seed=1, learning_rate=.02,
+DEFAULT = dict(model_id="bot-opponent-v1", schema=1, players=6, seed=1, learning_rate=.02,
                checkpoint_every=100, archive_every=100, archive_size=8,
                population=['blueprint','blueprint','calling','aggressive'])
 
@@ -25,6 +25,8 @@ def configuration(path=None):
     for name in ('seed','players','checkpoint_every','archive_every','archive_size'):
         if type(config[name]) is not int or config[name] < (0 if name == 'seed' else 1):
             raise ValueError(f'invalid {name}')
+    if config['model_id'] != 'bot-opponent-v1':
+        raise ValueError('only bot-opponent-v1 training is active; human training is deferred')
     if config['players'] != 6:
         raise ValueError('baseline trainer currently supports six players only')
     if type(config['learning_rate']) not in (int,float) or not 0 < config['learning_rate'] <= 1:
@@ -56,7 +58,7 @@ def train(hands, seed, path, *, config=None, resume=None, overwrite=False):
         raise ValueError('output exists; use --resume or explicitly --overwrite')
     rng=Random(cfg['seed']); table={}; archive=[{}]; completed=0; seconds=0
     if resume:
-        saved=load_checkpoint(resume)
+        saved=load_checkpoint(resume, model_id=cfg['model_id'])
         state=saved.get('training')
         if state is None: raise ValueError('checkpoint has no resumable training state')
         if state['config'] != cfg: raise ValueError('resume configuration differs from checkpoint')
@@ -69,7 +71,7 @@ def train(hands, seed, path, *, config=None, resume=None, overwrite=False):
     except (OSError,subprocess.CalledProcessError): revision='unknown'
     log=target.with_suffix('.progress.jsonl')
     def save():
-        result=dict(schema=1,algorithm='tabular-reinforce-v1',engine='pokerkit-0.7.7',
+        result=dict(model_id=cfg['model_id'],schema=1,algorithm='tabular-reinforce-v1',engine='pokerkit-0.7.7',
                     seed=cfg['seed'],hands=completed,seconds=seconds+time.perf_counter()-start,
                     table=table,abstraction='rank-position-board-active-pot-v1',stacks=200,players=6,
                     training=dict(config=cfg,archive=archive,rng=rng.getstate()),
@@ -102,6 +104,6 @@ if __name__=='__main__':
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--hands',type=int,default=1000,help='total target, including resumed hands')
     p.add_argument('--seed',type=int); p.add_argument('--config')
-    p.add_argument('--output',default='artifacts/baseline.json');p.add_argument('--resume')
+    p.add_argument('--output',default='runs/bot/seed1.json');p.add_argument('--resume')
     p.add_argument('--overwrite',action='store_true')
     a=p.parse_args();train(a.hands,a.seed,a.output,config=a.config,resume=a.resume,overwrite=a.overwrite)

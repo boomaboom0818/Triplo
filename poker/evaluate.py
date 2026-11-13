@@ -6,9 +6,11 @@ from .config import load_checkpoint, load_config
 
 def evaluate(path,blocks,seed,copies,config_path="configs/bot.json"):
     config=load_config(config_path)
+    if config["status"] != "active":
+        raise ValueError("human-opponent model is deferred; use configs/bot.json")
     if not 1 <= copies <= 6: raise ValueError("copies must be between 1 and 6")
     if blocks<2: raise ValueError('at least two independent blocks required')
-    checkpoint=load_checkpoint(path); table=checkpoint['table']; reports={}
+    checkpoint=load_checkpoint(path, model_id=config["model_id"]); table=checkpoint['table']; reports={}
     for population in ['calling','tight','aggressive','blueprint']:
         start=time.perf_counter(); values=[]; latency=[]
         for block in range(blocks):
@@ -27,7 +29,7 @@ def evaluate(path,blocks,seed,copies,config_path="configs/bot.json"):
             decision_mean_ms=1000*statistics.mean(latency),wall_seconds=time.perf_counter()-start)
     return dict(config=config,seed=seed,copies=copies,populations=reports,warning='Smoke benchmark only; no strong held-out opponent integrated.')
 if __name__=='__main__':
-    p=argparse.ArgumentParser();p.add_argument('--checkpoint',default='artifacts/baseline.json')
+    p=argparse.ArgumentParser();p.add_argument('--checkpoint',default='runs/bot/seed1.json')
     p.add_argument('--blocks',type=int,default=20);p.add_argument('--seed',type=int,default=100000)
     p.add_argument('--copies',type=int,choices=range(1,7),default=1)
     p.add_argument('--config',default='configs/bot.json')

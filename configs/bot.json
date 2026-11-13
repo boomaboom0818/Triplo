@@ -1,1 +1,9 @@
-{"schema":1,"mode":"bot","policy":"blueprint","adaptation":"disabled_pending_validation"}
+{
+  "schema": 1,
+  "mode": "bot",
+  "policy": "blueprint",
+  "adaptation": "disabled_pending_validation",
+  "model_id": "bot-opponent-v1",
+  "status": "active",
+  "objective": "maximize_expected_winnings"
+}

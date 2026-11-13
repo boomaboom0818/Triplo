@@ -1,0 +1,64 @@
+{
+  "config": {
+    "schema": 1,
+    "mode": "bot",
+    "policy": "blueprint",
+    "adaptation": "disabled_pending_validation",
+    "model_id": "bot-opponent-v1",
+    "status": "active",
+    "objective": "maximize_expected_winnings"
+  },
+  "seed": 100000,
+  "copies": 1,
+  "populations": {
+    "calling": {
+      "bb_per_100": 573.3333333333334,
+      "ci95_cluster_bootstrap": [
+        -1338.3333333333335,
+        2295.8333333333335
+      ],
+      "independent_deal_blocks": 10,
+      "table_hands": 60,
+      "candidate_hands": 60,
+      "decision_mean_ms": 0.002015239508605966,
+      "wall_seconds": 0.7848350200001732
+    },
+    "tight": {
+      "bb_per_100": 112.5,
+      "ci95_cluster_bootstrap": [
+        100.0,
+        122.5
+      ],
+      "independent_deal_blocks": 10,
+      "table_hands": 60,
+      "candidate_hands": 60,
+      "decision_mean_ms": 0.0025899732718244195,
+      "wall_seconds": 0.08901605300343363
+    },
+    "aggressive": {
+      "bb_per_100": 671.6666666666665,
+      "ci95_cluster_bootstrap": [
+        -1525.0,
+        3268.333333333333
+      ],
+      "independent_deal_blocks": 10,
+      "table_hands": 60,
+      "candidate_hands": 60,
+      "decision_mean_ms": 0.0028658278392130823,
+      "wall_seconds": 0.23270156400394626
+    },
+    "blueprint": {
+      "bb_per_100": 985.0,
+      "ci95_cluster_bootstrap": [
+        -1855.8333333333333,
+        3490.8333333333335
+      ],
+      "independent_deal_blocks": 10,
+      "table_hands": 60,
+      "candidate_hands": 60,
+      "decision_mean_ms": 0.008917696161652769,
+      "wall_seconds": 0.277659778999805
+    }
+  },
+  "warning": "Smoke benchmark only; no strong held-out opponent integrated."
+}

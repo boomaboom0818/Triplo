@@ -4,11 +4,16 @@ from poker.config import load_config, load_checkpoint
 from poker.policy import Policy
 from poker.game import Game
 
-def test_same_strength_modes():
+def test_model_targets():
     a=load_config('configs/bot.json');b=load_config('configs/human.json')
-    assert {k:v for k,v in a.items() if k!='mode'}=={k:v for k,v in b.items() if k!='mode'}
-    o=Game(1).observe()
-    assert Policy(1,mode='bot').act(o)==Policy(1,mode='human').act(o)
+    assert a['model_id'] != b['model_id']
+    assert a['status']=='active' and b['status']=='deferred'
+    assert a['objective']==b['objective']=='maximize_expected_winnings'
+    from poker.evaluate import evaluate
+    with pytest.raises(ValueError,match='deferred'):
+        evaluate('nonexistent.json',2,1,1,'configs/human.json')
+    with pytest.raises(ValueError,match='identity mismatch'):
+        load_checkpoint('artifacts/baseline.json',model_id=a['model_id'])
 
 def test_shared_training_table():
     table={}; p=Policy(table=table)

@@ -19,3 +19,11 @@ def test_invalid_config(tmp_path,field,value):
     cfg=configuration();cfg[field]=value
     path=tmp_path/'bad.json';path.write_text(json.dumps(cfg))
     with pytest.raises(ValueError):configuration(path)
+
+def test_bot_identity_and_human_training_deferred(tmp_path):
+    result=train(2,None,tmp_path/'bot.json')
+    assert result['model_id']=='bot-opponent-v1'
+    cfg=configuration();cfg['model_id']='human-opponent-v1'
+    path=tmp_path/'human.json';path.write_text(json.dumps(cfg))
+    with pytest.raises(ValueError,match='human training is deferred'):
+        train(2,None,tmp_path/'human-model.json',config=path)

@@ -1,1 +1,9 @@
-{"schema":1,"mode":"human","policy":"blueprint","adaptation":"disabled_pending_validation"}
+{
+  "schema": 1,
+  "mode": "human",
+  "policy": "blueprint",
+  "adaptation": "disabled_pending_validation",
+  "model_id": "human-opponent-v1",
+  "status": "deferred",
+  "objective": "maximize_expected_winnings"
+}

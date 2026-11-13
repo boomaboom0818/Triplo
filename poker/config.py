@@ -8,13 +8,18 @@ def load_config(path):
     config = json.loads(Path(path).read_text())
     if (config.get('schema') != 1 or config.get('mode') not in ('bot', 'human')
             or config.get('policy') != 'blueprint'
+            or config.get('model_id') != config.get('mode') + '-opponent-v1'
+            or config.get('status') != ('active' if config.get('mode') == 'bot' else 'deferred')
+            or config.get('objective') != 'maximize_expected_winnings'
             or config.get('adaptation') != 'disabled_pending_validation'):
         raise ValueError('unsupported policy configuration')
     return config
 
 
-def load_checkpoint(path):
+def load_checkpoint(path, *, model_id=None):
     checkpoint = json.loads(Path(path).read_text())
+    if model_id is not None and checkpoint.get('model_id') != model_id:
+        raise ValueError('checkpoint model identity mismatch; legacy artifacts are unassigned')
     expected = dict(schema=1, algorithm='tabular-reinforce-v1',
                     engine='pokerkit-0.7.7', abstraction='rank-position-board-active-pot-v1',
                     stacks=200, players=6)
