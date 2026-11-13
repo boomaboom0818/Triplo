@@ -106,3 +106,50 @@ cycle. A large training run has deliberately not been started: this baseline is
 ready for reproducible experiments, while MCCFR, search, and validated opponent
 adaptation remain research implementation work. Scale-up should follow those
 algorithmic improvements, not assume more baseline hands establish strength.
+
+## Bot milestone: reference external-sampling MCCFR
+
+The new `poker.cfr` implementation is separate from the policy-gradient baseline.
+It implements regret matching, external-sampling regret traversal, and a separate
+importance-weighted average-policy traversal appropriate for multiple players.
+Strategies are frozen throughout each iteration; chance deals and other players'
+actions are sampled, while all updater actions are explored. It does not use
+Pluribus's pruning, linear weighting, action translation or live search.
+
+```sh
+# Algorithm validation on Kuhn (not a hold'em strength benchmark):
+.venv/bin/python -m poker.train_cfr --game kuhn --iterations 10000 --output runs/bot/kuhn.json
+# Six-max reference pilot; start small and measure:
+.venv/bin/python -m poker.train_cfr --game holdem --iterations 10 --output runs/bot/cfr.json
+.venv/bin/python -m poker.train_cfr --game holdem --iterations 20 --resume runs/bot/cfr.json --output runs/bot/cfr.json
+.venv/bin/python -m poker.evaluate --checkpoint runs/bot/cfr.json --blocks 100 --config configs/bot.json
+```
+
+CFR checkpoints have a distinct algorithm tag and contain regrets, average-policy
+sums, RNG state, configuration, node counts and elapsed compute time. The command
+saves every 100 iterations and at the target; interruption can lose the unfinished
+interval. Evaluation reads the average policy, rejects Kuhn checkpoints, and uses
+uniform actions at unseen information sets. The existing baseline checkpoints
+remain compatible with evaluation. Do not compare iteration counts with baseline
+hand counts: each CFR iteration traverses many counterfactual branches.
+
+The Hold'em reference key contains only own cards and observed public history,
+including exact legal action amounts, board suits and stack sizes. It retains
+recall but creates a huge sparse table. It is intentionally a correctness reference,
+not a practical competitive abstraction. Full-deck exact-key training is unlikely
+to generalize to unseen deals. Do not allocate a substantial training budget yet.
+The CFR trainer currently uses current-policy self-play only; historical-population
+mixing remains in the older policy-gradient trainer and is not yet ported to CFR.
+
+Tests cover analytic three-player regret and averaging weights, branch isolation,
+private-card information boundaries, exact resume, and the known two-player Kuhn
+value. The latter validates a small algorithm case; it is **not** multiplayer
+exploitability or strength evidence. `artifacts/bot/cfr-smoke.json` records one
+actual six-player iteration. The next work is bounded practical abstractions,
+strong held-out opponents and range-aware search, with profiling before scale-up.
+
+Algorithm reference: [Lanctot et al., Monte Carlo Sampling for Regret Minimization
+in Extensive Games](https://www.mlanctot.info/files/papers/nips09mccfr_techreport.pdf).
+The implementation here is original project code; no third-party algorithm source
+was copied. Multiplayer equilibrium guarantees are not inferred from the
+paper's two-player zero-sum equilibrium results.

@@ -1,11 +1,15 @@
 """Exact-value engine contracts: integer chip payouts, not just conservation."""
 from pokerkit import Automation, NoLimitTexasHoldem
+from collections import deque
 
 
 def state(stacks, holes):
     auto=tuple(a for a in Automation if a not in (Automation.HOLE_DEALING,Automation.BOARD_DEALING))
     s=NoLimitTexasHoldem.create_state(auto,True,0,(1,2),2,stacks,len(stacks))
     for hole in holes:s.deal_hole(hole)
+    # Keep scripted future board cards away from automatic random burns.
+    reserved={"2c","3c","4h","8s","9d","As","Ks","Qs","Js","Ts"}
+    s.deck_cards=deque(sorted(s.deck_cards,key=lambda c:(repr(c) in reserved,repr(c))))
     return s
 
 

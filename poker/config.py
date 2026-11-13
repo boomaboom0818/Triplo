@@ -20,6 +20,21 @@ def load_checkpoint(path, *, model_id=None):
     checkpoint = json.loads(Path(path).read_text())
     if model_id is not None and checkpoint.get('model_id') != model_id:
         raise ValueError('checkpoint model identity mismatch; legacy artifacts are unassigned')
+    if checkpoint.get('algorithm') == 'external-sampling-mccfr-v1':
+        if (checkpoint.get('schema') != 1 or checkpoint.get('engine') != 'pokerkit-0.7.7'
+                or checkpoint.get('abstraction') != 'exact-observation-v1'
+                or checkpoint.get('config', {}).get('game') != 'holdem'
+                or checkpoint.get('config', {}).get('players') != 6):
+            raise ValueError('evaluation requires a six-player holdem CFR checkpoint')
+        for name in ('regrets','sums'):
+            rows=checkpoint.get(name)
+            if not isinstance(rows,dict): raise ValueError('invalid CFR table')
+            for row in rows.values():
+                if (not isinstance(row,list) or not 1 <= len(row) <= 6
+                        or any(type(x) not in (int,float) or not math.isfinite(x) for x in row)
+                        or (name=='sums' and any(x<0 for x in row))):
+                    raise ValueError('invalid CFR values')
+        return checkpoint
     expected = dict(schema=1, algorithm='tabular-reinforce-v1',
                     engine='pokerkit-0.7.7', abstraction='rank-position-board-active-pot-v1',
                     stacks=200, players=6)

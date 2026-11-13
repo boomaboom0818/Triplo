@@ -2,6 +2,7 @@ import argparse,json,time,statistics
 from random import Random
 from .game import play
 from .policy import Policy
+from .cfr import CFRPolicy
 from .config import load_checkpoint, load_config
 
 def evaluate(path,blocks,seed,copies,config_path="configs/bot.json"):
@@ -10,7 +11,7 @@ def evaluate(path,blocks,seed,copies,config_path="configs/bot.json"):
         raise ValueError("human-opponent model is deferred; use configs/bot.json")
     if not 1 <= copies <= 6: raise ValueError("copies must be between 1 and 6")
     if blocks<2: raise ValueError('at least two independent blocks required')
-    checkpoint=load_checkpoint(path, model_id=config["model_id"]); table=checkpoint['table']; reports={}
+    checkpoint=load_checkpoint(path, model_id=config["model_id"]); table=checkpoint.get('table',{}); reports={}
     for population in ['calling','tight','aggressive','blueprint']:
         start=time.perf_counter(); values=[]; latency=[]
         for block in range(blocks):
@@ -20,6 +21,9 @@ def evaluate(path,blocks,seed,copies,config_path="configs/bot.json"):
                 candidates={(rotation+i)%6 for i in range(copies)}
                 policies=[Policy(seed+block*100+rotation*6+i,table if i in candidates else {},
                                  'blueprint' if i in candidates else population, mode=config['mode']) for i in range(6)]
+                if checkpoint['algorithm']=='external-sampling-mccfr-v1':
+                    for i in candidates:
+                        policies[i]=CFRPolicy(checkpoint['sums'],seed+block*100+rotation*6+i)
                 payoff,traces,times=play(policies,seed+block,button=0)
                 results.extend(payoff[i] for i in candidates); latency.extend(times)
             values.append(statistics.mean(results)*100)
@@ -27,7 +31,7 @@ def evaluate(path,blocks,seed,copies,config_path="configs/bot.json"):
         reports[population]=dict(bb_per_100=statistics.mean(values),ci95_cluster_bootstrap=[boot[50],boot[1949]],
             independent_deal_blocks=blocks,table_hands=6*blocks,candidate_hands=6*blocks*copies,
             decision_mean_ms=1000*statistics.mean(latency),wall_seconds=time.perf_counter()-start)
-    return dict(config=config,seed=seed,copies=copies,populations=reports,warning='Smoke benchmark only; no strong held-out opponent integrated.')
+    return dict(algorithm=checkpoint['algorithm'],config=config,seed=seed,copies=copies,populations=reports,warning='Smoke benchmark only; no strong held-out opponent integrated.')
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('--checkpoint',default='runs/bot/seed1.json')
     p.add_argument('--blocks',type=int,default=20);p.add_argument('--seed',type=int,default=100000)
