@@ -12,10 +12,12 @@ def key(o):
 
 class Policy:
     def __init__(self, seed=0, table=None, style='blueprint', mode='bot'):
-        self.rng=Random(seed); self.table=table or {}; self.style=style
+        self.rng=Random(seed); self.table={} if table is None else table; self.style=style
         self.mode=mode; self.model=Opponents()
     def probabilities(self,o):
         logits=self.table.get(key(o),[0.0]*len(o.legal))
+        if len(logits) != len(o.legal):
+            raise ValueError('checkpoint action count mismatch')
         weights=[math.exp(max(-20,min(20,x))) for x in logits]
         return [w/sum(weights) for w in weights]
     def act(self,o):

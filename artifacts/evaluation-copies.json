@@ -1,4 +1,10 @@
 {
+  "config": {
+    "schema": 1,
+    "mode": "bot",
+    "policy": "blueprint",
+    "adaptation": "disabled_pending_validation"
+  },
   "seed": 100000,
   "copies": 3,
   "populations": {
@@ -11,8 +17,8 @@
       "independent_deal_blocks": 10,
       "table_hands": 60,
       "candidate_hands": 180,
-      "decision_mean_ms": 0.004581183585005105,
-      "wall_seconds": 0.48290500300208805
+      "decision_mean_ms": 0.007376469278681147,
+      "wall_seconds": 0.7848137539986055
     },
     "tight": {
       "bb_per_100": 25.0,
@@ -23,8 +29,8 @@
       "independent_deal_blocks": 10,
       "table_hands": 60,
       "candidate_hands": 180,
-      "decision_mean_ms": 0.006611092690942365,
-      "wall_seconds": 0.16535897600260796
+      "decision_mean_ms": 0.011548721689030095,
+      "wall_seconds": 0.29042547900462523
     },
     "aggressive": {
       "bb_per_100": -394.16666666666663,
@@ -35,8 +41,8 @@
       "independent_deal_blocks": 10,
       "table_hands": 60,
       "candidate_hands": 180,
-      "decision_mean_ms": 0.005414041974489339,
-      "wall_seconds": 0.24767517500004033
+      "decision_mean_ms": 0.009283099417972191,
+      "wall_seconds": 0.4071725610046997
     },
     "blueprint": {
       "bb_per_100": 650.2777777777777,
@@ -47,8 +53,8 @@
       "independent_deal_blocks": 10,
       "table_hands": 60,
       "candidate_hands": 180,
-      "decision_mean_ms": 0.008515324231962957,
-      "wall_seconds": 0.26978327200049534
+      "decision_mean_ms": 0.014645133824526903,
+      "wall_seconds": 0.4458114110020688
     }
   },
   "warning": "Smoke benchmark only; no strong held-out opponent integrated."

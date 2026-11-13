@@ -24,7 +24,7 @@ The committed checkpoint is only a 200-hand smoke training run. Evaluation JSON 
 - `poker/model.py`: independent public-action counts indexed by player, position, street, including sizing. This is not yet connected to action selection.
 - `poker/train.py`: terminal-return REINFORCE over coarse information buckets, mixing historical checkpoints and scripted opponents. No CFR guarantees claimed.
 - `poker/evaluate.py`: held-out deal seeds, seat rotations, candidate copies, population-separated results. Bootstrap resamples whole duplicate-deal blocks, preserving within-block seat and deal dependencies.
-- `configs/`: bot and human configuration declarations. Both use exactly the same policy. They are not yet loaded by a CLI, and neither has validated adaptation.
+- `configs/`: bot and human configuration declarations. Both use exactly the same policy. Evaluation loads them with `--config configs/bot.json` or `--config configs/human.json`. Neither has validated adaptation.
 
 Observations are frozen detached records with own hole cards, board, public stacks, active players and public action history. No engine or future deck is passed to policies. This protects ordinary API consumers, not hostile Python code running in the same process. Untrusted external agents require process isolation and serialized observations before deployment. Independent policies have their own RNG and opponent model; do not share model state between seated agents.
 
@@ -32,7 +32,7 @@ The current action menu is call/check, fold when legal, minimum raise, half-pot,
 
 ## Engine and research decisions
 
-[PokerKit documentation](https://pokerkit.readthedocs.io/en/stable/simulation.html) supplies a maintained no-limit engine, including side-pot and betting mechanics. Version 0.7.7 is pinned. [Its license is MIT](https://github.com/uoftcprg/pokerkit/blob/main/LICENSE); installed distributions retain upstream notices. Engine behavior is covered here by initial integration tests, **not a complete independent rules certification**. Side pots, short-raise reopening, folded contributions, split pots, odd chips and uncalled returns need explicit expected-value regression fixtures before trusting large experiments.
+[PokerKit documentation](https://pokerkit.readthedocs.io/en/stable/simulation.html) supplies a maintained no-limit engine, including side-pot and betting mechanics. Version 0.7.7 is pinned. [Its license is MIT](https://github.com/uoftcprg/pokerkit/blob/main/LICENSE); installed distributions retain upstream notices. Engine behavior is covered here by initial integration tests, **not a complete independent rules certification**. The 19 tests include short-all-in reopening, folded blinds, uncalled returns, button rotations and fold-down to heads-up. Exact multi-side-pot, cumulative-short-raise, split-pot and odd-chip fixtures remain necessary before trusting large experiments.
 
 [Brown and Sandholm, 2019](https://noambrown.com/papers/19-Science-Superhuman.pdf) and [supplement](https://noambrown.com/papers/19-Science-Superhuman_Supp.pdf) motivate an offline blueprint plus imperfect-information limited-depth search. This implementation is a preliminary learning baseline, not a reproduction. Multiplayer CFR does not inherit two-player zero-sum convergence guarantees.
 
