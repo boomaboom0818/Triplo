@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "game": "holdem",
+  "players": 6,
+  "seed": 1,
+  "iterations": 10000,
+  "checkpoint_every": 10,
+  "max_iteration_nodes": 100000,
+  "max_seconds": 3600,
+  "max_information_sets": 500000
+}

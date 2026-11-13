@@ -153,3 +153,58 @@ in Extensive Games](https://www.mlanctot.info/files/papers/nips09mccfr_techrepor
 The implementation here is original project code; no third-party algorithm source
 was copied. Multiplayer equilibrium guarantees are not inferred from the
 paper's two-player zero-sum equilibrium results.
+
+## Unattended CFR run controls and readiness gate
+
+Run the measured preflight in a **new directory** before allocating substantial
+compute:
+
+```sh
+.venv/bin/python -m pytest -q
+.venv/bin/python -m poker.preflight --output runs/bot/preflight --iterations 10
+```
+
+Its report includes actual traversal time, node count, checkpoint size and
+average-policy table coverage on ten independently seeded held-out deals. Coverage
+is diagnostic, not a win-rate or strength metric. The report explicitly distinguishes
+operational completion from readiness for competitive full training.
+
+The bot run configuration is `configs/cfr-bot.json`:
+
+```sh
+.venv/bin/python -m poker.train_cfr --config configs/cfr-bot.json --output runs/bot/cfr.json
+.venv/bin/python -m poker.train_cfr --config configs/cfr-bot.json --resume runs/bot/cfr.json --output runs/bot/cfr.json
+```
+
+The JSON config is authoritative for all training settings; when supplied, only
+CLI output/resume arguments remain independent. Its initial limits are 10,000 total
+iterations, ten-iteration checkpoint intervals, 100,000 nodes per iteration,
+one hour per invocation and 500,000 information sets. These are protective pilot
+limits, **not empirically justified competitive training requirements**. Increase
+limits in the configuration only after reviewing the pilot. Resume preserves the
+seed/game/player configuration; resource budgets may be changed. Completed target
+runs need a larger total iteration target to resume.
+
+SIGINT/SIGTERM or a traversal limit rolls back the current iteration (including RNG
+and average-policy updates), then saves the last complete state. No partial
+iteration is silently accepted. Repeated node-limit stops need an increased node
+budget or backend changes; resume does not skip the difficult traversal. Time
+limits are checked per node, so slow engine operations and checkpoint serialization
+can overrun the wall-time budget. Information-set limits are checked between
+iterations and can overshoot by one iteration; this is not a hard RAM limit.
+Use an external OS memory limit if needed; an OOM/SIGKILL cannot save progress.
+
+Each output is protected by a Linux advisory writer lock. A `.previous` checkpoint
+retains the previous save, and JSONL logs include iteration/node counts, elapsed
+time, table size, checkpoint bytes and stop reason. To recover, resume from the
+`.previous` file into a new output path. Keep checkpoints and logs on a filesystem
+with enough free space for current, previous and temporary copies. Locks guard
+cooperating local trainers, not arbitrary external writers or all network filesystems.
+Atomic replacement protects against incomplete file writes; no storage hardware
+failure guarantee is implied.
+
+Remaining full-training blockers are practical abstraction/generalization,
+strong held-out populations, and a measured learning curve. Search and population
+training are also still incomplete. The present controls make experiments bounded
+and recoverable; they do not turn the exact-state reference algorithm into a
+competitive production trainer.

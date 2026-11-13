@@ -6,6 +6,7 @@ and samples others uniformly, correcting their sampling reach. This avoids the
 incorrect multiplayer 'simple averaging' shortcut.
 """
 import copy
+import time
 from random import Random
 
 
@@ -15,10 +16,21 @@ def normalize(weights):
     return [x/total for x in positive] if total else [1/len(weights)]*len(weights)
 
 
+class TraversalLimit(RuntimeError):
+    """An iteration exceeded its configured resource budget."""
+
+
 class MCCFR:
     def __init__(self,seed=1):
         self.rng=Random(seed);self.regrets={};self.sums={};self.iterations=0
         self.nodes=0
+
+    def visit(self):
+        self.nodes+=1
+        if getattr(self,"node_limit",None) is not None and self.nodes>self.node_limit:
+            raise TraversalLimit("iteration node budget exceeded")
+        if getattr(self,"deadline",None) is not None and time.monotonic()>self.deadline:
+            raise TraversalLimit("run time budget reached")
 
     def strategy(self,key,actions):
         row=self.regrets.get(key,[0.0]*len(actions))
@@ -26,7 +38,7 @@ class MCCFR:
         return normalize(row)
 
     def regret(self,state,updater,delta):
-        self.nodes+=1
+        self.visit()
         if state.terminal():return state.returns()[updater]
         actor,key,actions=state.info()
         strategy=self.strategy(key,actions)
@@ -39,27 +51,38 @@ class MCCFR:
         return value
 
     def average(self,state,owner,own_reach=1.0,inverse_sample=1.0):
-        self.nodes+=1
+        self.visit()
         if state.terminal():return
         actor,key,actions=state.info();strategy=self.strategy(key,actions)
         if actor==owner:
-            row=self.sums.setdefault(key,[0.0]*len(actions))
+            row=getattr(self,'pending_sums',self.sums).setdefault(key,[0.0]*len(actions))
             for i,p in enumerate(strategy):row[i]+=own_reach*inverse_sample*p
             for a,p in zip(actions,strategy):
                 if p:self.average(state.child(a),owner,own_reach*p,inverse_sample)
         else:
             self.average(state.child(self.rng.choice(actions)),owner,own_reach,inverse_sample*len(actions))
 
-    def step(self,factory,players):
-        # All updates use the frozen strategy from the start of this iteration.
-        delta={}
-        for player in range(players):
-            self.regret(factory(self.rng.randrange(2**63)),player,delta)
-            self.average(factory(self.rng.randrange(2**63)),player)
-        for key,values in delta.items():
-            row=self.regrets.setdefault(key,[0.0]*len(values))
-            for i,v in enumerate(values):row[i]+=v
-        self.iterations+=1
+    def step(self,factory,players,max_nodes=None,deadline=None):
+        # An interrupted traversal must not leak partial averages or RNG state.
+        rng_state=self.rng.getstate(); old_nodes=self.nodes
+        self.node_limit=None if max_nodes is None else self.nodes+max_nodes
+        self.deadline=deadline; self.pending_sums={};delta={}
+        try:
+            for player in range(players):
+                self.regret(factory(self.rng.randrange(2**63)),player,delta)
+                self.average(factory(self.rng.randrange(2**63)),player)
+        except BaseException:
+            self.rng.setstate(rng_state);self.nodes=old_nodes
+            raise
+        else:
+            for destination,updates in ((self.regrets,delta),(self.sums,self.pending_sums)):
+                for key,values in updates.items():
+                    row=destination.setdefault(key,[0.0]*len(values))
+                    for i,v in enumerate(values):row[i]+=v
+            self.iterations+=1
+        finally:
+            del self.pending_sums
+            self.node_limit=None;self.deadline=None
 
 
 class Kuhn:

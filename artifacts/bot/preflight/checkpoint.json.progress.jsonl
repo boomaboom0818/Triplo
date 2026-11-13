@@ -1,0 +1,10 @@
+{"iterations": 1, "nodes": 1666, "seconds": 2.8887459309989936, "stop_reason": "target_reached", "information_sets": 233, "checkpoint_bytes": 120750}
+{"iterations": 2, "nodes": 3654, "seconds": 6.342569843000092, "stop_reason": "target_reached", "information_sets": 499, "checkpoint_bytes": 260727}
+{"iterations": 3, "nodes": 4480, "seconds": 7.759279955003876, "stop_reason": "target_reached", "information_sets": 579, "checkpoint_bytes": 292591}
+{"iterations": 4, "nodes": 5650, "seconds": 9.644651487004012, "stop_reason": "target_reached", "information_sets": 705, "checkpoint_bytes": 347580}
+{"iterations": 5, "nodes": 7102, "seconds": 12.09176072399714, "stop_reason": "target_reached", "information_sets": 889, "checkpoint_bytes": 434432}
+{"iterations": 6, "nodes": 8517, "seconds": 14.421212765002565, "stop_reason": "target_reached", "information_sets": 1085, "checkpoint_bytes": 528105}
+{"iterations": 7, "nodes": 10466, "seconds": 17.81386411600397, "stop_reason": "target_reached", "information_sets": 1359, "checkpoint_bytes": 665193}
+{"iterations": 8, "nodes": 14843, "seconds": 25.228406884001743, "stop_reason": "target_reached", "information_sets": 2064, "checkpoint_bytes": 1005716}
+{"iterations": 9, "nodes": 16644, "seconds": 28.239610153003014, "stop_reason": "target_reached", "information_sets": 2321, "checkpoint_bytes": 1127946}
+{"iterations": 10, "nodes": 18152, "seconds": 30.769862312998157, "stop_reason": "target_reached", "information_sets": 2513, "checkpoint_bytes": 1226346}

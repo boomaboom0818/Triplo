@@ -56,3 +56,30 @@ def test_three_player_regret_and_average_weights():
     solver.average(Toy(),2)
     # Two uniformly sampled external decisions: inverse sampling reach = 4.
     assert solver.sums['2']==[2,2]
+
+
+def test_budget_rollback_and_resume(tmp_path):
+    import pytest
+    from poker.cfr import TraversalLimit
+    solver=MCCFR(1);before=solver.rng.getstate()
+    with pytest.raises(TraversalLimit):solver.step(Kuhn,2,max_nodes=2)
+    assert solver.regrets=={} and solver.sums=={} and solver.nodes==0
+    assert solver.rng.getstate()==before and solver.iterations==0
+    solver.step(Kuhn,2)
+    reference=MCCFR(1);reference.step(Kuhn,2)
+    assert solver.regrets==reference.regrets and solver.sums==reference.sums
+    path=tmp_path/'bounded.json'
+    stopped=train(5,path,max_iteration_nodes=2)
+    assert stopped['iterations']==0
+    resumed=train(5,path,resume=path)
+    full=train(5,tmp_path/'full.json')
+    assert resumed['regrets']==full['regrets'] and resumed['sums']==full['sums']
+    assert path.with_name(path.name+'.previous').exists()
+
+
+def test_output_lock(tmp_path):
+    import pytest
+    from poker.train_cfr import run_lock
+    path=tmp_path/'locked.json'
+    with run_lock(path):
+        with pytest.raises(ValueError,match='another trainer'):train(1,path)

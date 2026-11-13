@@ -5,3 +5,7 @@ __pycache__/
 *.egg-info/
 
 runs/
+
+*.lock
+*.previous
+*.tmp
