@@ -47,23 +47,25 @@ def run_child(args,log,deadline):
             stop()
 
 
+def validate_evaluation(r,checkpoint,validation,seed,uniform,blocks):
+    if (r['checkpoint_sha256']!=digest(checkpoint) or r['seed']!=seed or r['copies']!=1
+        or r.get('uniform_control',False)!=uniform or r.get('live_fallback',False)
+        or r['opponent_checkpoint_hashes']!=['checkpoint:'+digest(validation)]
+        or len(r['populations'])!=6
+        or any(v['independent_deal_blocks']!=blocks or len(v['deal_block_bb_per_100'])!=blocks for v in r['populations'].values())):
+        raise ValueError('evaluation provenance mismatch')
+    return r
+
+
 def evaluate(checkpoint,output,validation,seed,uniform,deadline,blocks=1000):
     if type(blocks) is not int or blocks<2:raise ValueError("at least two independent deal blocks required")
     with run_lock(output):
-        def validate(r):
-            if (r['checkpoint_sha256']!=digest(checkpoint) or r['seed']!=seed or r['copies']!=1
-                or r.get('uniform_control',False)!=uniform or r.get('live_fallback',False)
-                or r['opponent_checkpoint_hashes']!=['checkpoint:'+digest(validation)]
-                or len(r['populations'])!=6
-                or any(v['independent_deal_blocks']!=blocks or len(v['deal_block_bb_per_100'])!=blocks for v in r['populations'].values())):
-                raise ValueError('evaluation provenance mismatch')
-            return r
-        if output.exists():return validate(json.loads(output.read_text()))
+        if output.exists():return validate_evaluation(json.loads(output.read_text()),checkpoint,validation,seed,uniform,blocks)
         pending=Path(str(output)+'.pending')
         args=['poker.evaluate','--checkpoint',str(checkpoint),'--blocks',str(blocks),'--seed',str(seed),'--copies','1','--opponent-checkpoints',str(validation)]
         if uniform:args+=['--uniform-control']
         run_child(args,pending,deadline)
-        result=validate(json.loads(pending.read_text()));pending.replace(output)
+        result=validate_evaluation(json.loads(pending.read_text()),checkpoint,validation,seed,uniform,blocks);pending.replace(output)
         return result
 
 

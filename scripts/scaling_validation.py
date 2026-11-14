@@ -8,11 +8,11 @@ from poker.train import atomic_save
 from poker.train_cfr import run_lock
 from poker.compare import paired_difference
 from scripts.sampling_curve import resume_checkpoint
-from scripts.sustained_train import digest,stage_config,evaluate
+from scripts.sustained_train import digest,stage_config,evaluate,validate_evaluation
 LIMIT=4*1024**3
 
-def scaling_limits():
-    resource.setrlimit(resource.RLIMIT_AS,(LIMIT,LIMIT))
+def scaling_limits(limit=LIMIT):
+    resource.setrlimit(resource.RLIMIT_AS,(limit,limit))
     os.nice(10)
 
 ROOT=Path('runs/bot/scaling-validation-001')
@@ -39,7 +39,11 @@ def resource_pass(metrics,min_available,two_workers_observed=True):
 def run_pair(jobs,deadline):
     if not jobs:return
     if len(jobs)>2:raise ValueError("protocol permits at most two workers")
-    if available_memory()<len(jobs)*LIMIT+2*1024**3:raise RuntimeError('insufficient host memory for two bounded workers')
+    modules=[j.get('module','poker.train_cfr') for j in jobs]
+    if len(set(modules))!=1 or modules[0] not in ('poker.train_cfr','poker.evaluate'):raise ValueError('uniform allowed worker modules required')
+    memory_gib=4 if modules[0]=='poker.train_cfr' else 3
+    worker_limit=memory_gib*1024**3
+    if available_memory()<len(jobs)*worker_limit+2*1024**3:raise RuntimeError('insufficient host memory for two bounded workers')
     if len({str(j['output'].resolve()) for j in jobs})!=len(jobs):raise ValueError('duplicate outputs')
     if len(os.sched_getaffinity(0))<2:raise RuntimeError("two available CPU cores required")
     started=time.monotonic();children=[]
@@ -57,13 +61,13 @@ def run_pair(jobs,deadline):
             for job in jobs:
                 if time.time()>=deadline:raise TimeoutError('scaling deadline reached')
                 log=stack.enter_context(job['log'].open('a'))
-                args=[sys.executable,'-m','scripts.limited_worker','--metrics',str(job['metrics']),'--memory-gib','4','poker.train_cfr',*job['args']]
-                children.append(subprocess.Popen(args,stdout=log,stderr=subprocess.STDOUT,preexec_fn=scaling_limits))
+                args=[sys.executable,'-m','scripts.limited_worker','--metrics',str(job['metrics']),'--memory-gib',str(memory_gib),job.get('module','poker.train_cfr'),*job['args']]
+                children.append(subprocess.Popen(args,stdout=log,stderr=subprocess.STDOUT,preexec_fn=lambda:scaling_limits(worker_limit)))
             while True:
                 now=time.time()
                 if now>=deadline:raise TimeoutError('scaling deadline reached')
                 mem=available_memory()
-                row={'time':now,'mem_available_bytes':mem,'disk_free_bytes':shutil.disk_usage(ROOT).free,'workers':[]}
+                row={'time':now,'mem_available_bytes':mem,'disk_free_bytes':shutil.disk_usage(ROOT).free,'module':modules[0],'workers':[]}
                 for child in children:
                     try:
                         fields={}
@@ -76,14 +80,40 @@ def run_pair(jobs,deadline):
                 if mem<2*1024**3:raise RuntimeError('host memory reserve below2GiB')
                 if row['disk_free_bytes']<10*1024**3:raise RuntimeError('disk reserve below10GiB')
                 codes=[c.poll() for c in children]
-                if any(code not in (None,0) for code in codes):raise RuntimeError(f'training worker failed: {codes}; inspect logs')
+                if any(code not in (None,0) for code in codes):raise RuntimeError(f'{modules[0]} worker failed: {codes}; inspect logs')
                 if all(code==0 for code in codes):
-                    with (ROOT/'batches.jsonl').open('a') as handle:handle.write(json.dumps({'workers':len(jobs),'wall_seconds':time.monotonic()-started,'metrics':[str(j['metrics']) for j in jobs]})+'\n')
+                    with (ROOT/'batches.jsonl').open('a') as handle:handle.write(json.dumps({'workers':len(jobs),'module':modules[0],'wall_seconds':time.monotonic()-started,'metrics':[str(j['metrics']) for j in jobs]})+'\n')
                     break
                 time.sleep(10)
     finally:
         cleanup()
         for sig,handler in old.items():signal.signal(sig,handler)
+
+
+def evaluate_parallel(requests,deadline):
+    """Up to two fixed-seed evaluations, held output locks through atomic publication."""
+    with ExitStack() as stack:
+        jobs=[]
+        for request in requests:
+            output=request['output'];checkpoint=request['checkpoint'];opponent=request['opponent']
+            stack.enter_context(run_lock(output))
+            if output.exists():
+                validate_evaluation(json.loads(output.read_text()),checkpoint,opponent,8200000,request['uniform'],2000)
+                continue
+            pending=Path(str(output)+'.pending')
+            if pending.exists():
+                # Preserve diagnostics from an interrupted attempt before a deliberate resume.
+                pending.replace(Path(str(pending)+f'.attempt-{time.time_ns()}'))
+            args=['--checkpoint',str(checkpoint),'--blocks','2000','--seed','8200000','--copies','1','--opponent-checkpoints',str(opponent)]
+            if request['uniform']:args+=['--uniform-control']
+            jobs.append({'module':'poker.evaluate','output':output,'log':pending,'metrics':Path(str(output)+'.metrics.json'),'args':args})
+        run_pair(jobs,deadline)
+        for request in requests:
+            output=request['output']
+            if output.exists():continue
+            pending=Path(str(output)+'.pending')
+            validate_evaluation(json.loads(pending.read_text()),request['checkpoint'],request['opponent'],8200000,request['uniform'],2000)
+            pending.replace(output)
 
 
 def verify_inputs(manifest):
@@ -145,6 +175,14 @@ def main(resume=False):
                     baseline=evaluate(PARENTS[i],ROOT/f'candidate-{i}-baseline-screen.json',VALIDATION,8100000,False,DEADLINE.timestamp(),blocks=200)
                     atomic_save(ROOT/f'candidate-{i}-{stage}-screen-paired.json',paired_difference(report,baseline))
             verify_inputs(manifest)
+            requests=[]
+            for i,parent in enumerate(PARENTS):
+                for population,opponent in [('validation',VALIDATION),('independent',ROBUSTNESS[i])]:
+                    for kind,checkpoint in [('confirm',ROOT/f'candidate-{i}-4200.json'),('baseline',parent),('uniform',ROOT/f'candidate-{i}-4200.json')]:
+                        requests.append({'checkpoint':checkpoint,'opponent':opponent,'uniform':kind=='uniform','output':ROOT/f'candidate-{i}-{population}-{kind}.json'})
+            for index in range(0,len(requests),2):
+                atomic_save(ROOT/'status.json',{'status':'confirming_parallel','batch':index//2})
+                evaluate_parallel(requests[index:index+2],DEADLINE.timestamp())
             final={}
             for i,parent in enumerate(PARENTS):
                 final[str(i)]={}
@@ -162,9 +200,9 @@ def main(resume=False):
                     atomic_save(ROOT/'learning-evidence.json',final)
             metrics=[json.loads((ROOT/f'candidate-{i}-{stage}-metrics.json').read_text()) for i in range(2) for stage in STAGES]
             health=[json.loads(line) for line in (ROOT/'health.jsonl').read_text().splitlines()]
-            overlap=any(len(r['workers'])==2 for r in health)
+            overlap=any(len(r['workers'])==2 and r.get('module','poker.train_cfr')=='poker.train_cfr' for r in health)
             batches=[json.loads(line) for line in (ROOT/'batches.jsonl').read_text().splitlines()]
-            cpu_ratios=[sum(json.loads(Path(p).read_text())['cpu_seconds'] for p in b['metrics'])/b['wall_seconds'] for b in batches if b['workers']==2]
+            cpu_ratios=[sum(json.loads(Path(p).read_text())['cpu_seconds'] for p in b['metrics'])/b['wall_seconds'] for b in batches if b['workers']==2 and b.get('module','poker.train_cfr')=='poker.train_cfr']
             table=[]
             for i in range(2):
                 saved=load_checkpoint(ROOT/f'candidate-{i}-4200.json')

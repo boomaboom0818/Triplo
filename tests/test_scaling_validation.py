@@ -66,3 +66,47 @@ def test_frozen_protocol_and_inputs_cannot_change(tmp_path):
     with pytest.raises(ValueError,match='algorithm changed'):scaling.verify_inputs(manifest)
     code.write_text('code');criteria.write_text('relaxed')
     with pytest.raises(ValueError,match='criteria changed'):scaling.verify_inputs(manifest)
+
+
+def test_parallel_confirmation_cache_and_atomic_outputs(tmp_path,monkeypatch):
+    checkpoint=tmp_path/'checkpoint';checkpoint.write_text('model')
+    opponent=tmp_path/'opponent';opponent.write_text('opponent')
+    requests=[{'checkpoint':checkpoint,'opponent':opponent,'uniform':bool(i),'output':tmp_path/f'{i}.json'} for i in range(2)]
+    interrupted=tmp_path/'0.json.pending';interrupted.write_text('previous interrupted attempt')
+    def run(jobs,deadline):
+        assert len(jobs)==2 and all(j['module']=='poker.evaluate' for j in jobs)
+        for j in jobs:
+            row={'independent_deal_blocks':2000,'deal_block_bb_per_100':[0]*2000}
+            report={'checkpoint_sha256':scaling.digest(checkpoint),'opponent_checkpoint_hashes':[scaling.digest(opponent)],'seed':8200000,'copies':1,'uniform_control':'--uniform-control' in j['args'],'live_fallback':False,'populations':{str(i):row for i in range(6)}}
+            report['opponent_checkpoint_hashes']=['checkpoint:'+report['opponent_checkpoint_hashes'][0]]
+            j['log'].write_text(json.dumps(report))
+    monkeypatch.setattr(scaling,'run_pair',run)
+    scaling.evaluate_parallel(requests,9999999999)
+    assert all(r['output'].exists() for r in requests)
+    assert next(tmp_path.glob('0.json.pending.attempt-*')).read_text()=='previous interrupted attempt'
+    monkeypatch.setattr(scaling,'run_pair',lambda jobs,deadline:pytest.fail('duplicate evaluation') if jobs else None)
+    scaling.evaluate_parallel(requests,9999999999)
+
+
+def test_corrupt_confirmation_stays_unpublished(tmp_path,monkeypatch):
+    checkpoint=tmp_path/'checkpoint';checkpoint.write_text('model')
+    output=tmp_path/'report.json';opponent=tmp_path/'opponent';opponent.write_text('opponent')
+    monkeypatch.setattr(scaling,'run_pair',lambda jobs,deadline:jobs[0]['log'].write_text('interrupted JSON'))
+    with pytest.raises(json.JSONDecodeError):scaling.evaluate_parallel([{'checkpoint':checkpoint,'opponent':opponent,'uniform':False,'output':output}],9999999999)
+    assert not output.exists() and (tmp_path/'report.json.pending').exists()
+
+
+def test_two_evaluators_keep_three_gib_caps(tmp_path,monkeypatch):
+    captured=[]
+    class Child:
+        pid=99999999
+        def poll(self):return 0
+    def launch(*args,**kwargs):kwargs['preexec_fn']();return Child()
+    monkeypatch.setattr(scaling,'ROOT',tmp_path)
+    monkeypatch.setattr(scaling,'available_memory',lambda:9*1024**3)
+    monkeypatch.setattr(scaling.shutil,'disk_usage',lambda path:__import__('types').SimpleNamespace(free=20*1024**3))
+    monkeypatch.setattr(scaling,'scaling_limits',lambda limit:captured.append(limit))
+    monkeypatch.setattr(scaling.subprocess,'Popen',launch)
+    jobs=[{'module':'poker.evaluate','output':tmp_path/f'{i}.json','log':tmp_path/f'{i}.pending','metrics':tmp_path/f'{i}.metrics','args':[]} for i in range(2)]
+    scaling.run_pair(jobs,__import__('time').time()+60)
+    assert captured==[3*1024**3,3*1024**3]
