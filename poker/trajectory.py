@@ -56,7 +56,7 @@ class TrajectoryMCCFR(MCCFR):
             self.pending_traversal_stats['max_inverse_own_sample']=max(self.pending_traversal_stats['max_inverse_own_sample'],inverse_own_sample)
         self.visit()
         if state.terminal():return state.returns()[updater]
-        self.record_visit(state,'regret',updater)
+        self.record_visit(state,'regret',updater,sampling='sampled')
         actor,key,actions=state.info();strategy=self.strategy(key,actions)
         if actor!=updater:
             frozen=getattr(self,'opponents',{}).get(actor)
@@ -84,7 +84,7 @@ class TrajectoryMCCFR(MCCFR):
             self.pending_traversal_stats['max_average_weight']=max(self.pending_traversal_stats['max_average_weight'],weight)
         self.visit()
         if state.terminal():return
-        self.record_visit(state,'average',owner)
+        self.record_visit(state,'average',owner,sampling='sampled')
         actor,key,actions=state.info();strategy=self.strategy(key,actions)
         if actor==owner:
             self.record_average_weight(state,weight)

@@ -49,8 +49,8 @@ class PrefixMCCFR(TrajectoryMCCFR):
             self.pending_traversal_stats['max_inverse_own_sample']=max(self.pending_traversal_stats['max_inverse_own_sample'],inverse_own_sample)
         self.visit()
         if state.terminal():return state.returns()[updater]
-        self.record_visit(state,'regret',updater)
         actor,key,actions=state.info();strategy=self.strategy(key,actions)
+        self.record_visit(state,'regret',updater,sampling='enumerated' if actor==updater and own_depth<self.depth else 'sampled')
         if actor!=updater:
             frozen=getattr(self,'opponents',{}).get(actor)
             if isinstance(frozen,str):

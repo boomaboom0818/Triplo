@@ -35,11 +35,16 @@ class MCCFR:
         if getattr(self,"deadline",None) is not None and time.monotonic()>self.deadline:
             raise TraversalLimit("run time budget reached")
 
-    def record_visit(self,state,traversal,owner):
+    def record_visit(self,state,traversal,owner,sampling=None):
         if not hasattr(state,'game'):return
         o=state.game.observe()
-        kind='enumerated' if o.player==owner else 'sampled'
-        key=f'{traversal}:street={o.street}:active={sum(o.active)}:{kind}'
+        if sampling is None:
+            kind='enumerated' if o.player==owner else 'sampled'
+            key=f'{traversal}:street={o.street}:active={sum(o.active)}:{kind}'
+        else:
+            if sampling not in ('enumerated','sampled'):raise ValueError('invalid sampling diagnostic')
+            role='owner' if o.player==owner else 'other'
+            key=f'sampling-v2:{traversal}:street={o.street}:active={sum(o.active)}:actor={role}:{sampling}'
         getattr(self,'pending_diagnostics',self.diagnostics)[key]+=1
 
     def record_average_weight(self,state,weight):

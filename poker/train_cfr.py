@@ -123,6 +123,7 @@ def _train(iterations,path,seed,game,players,resume,checkpoint_every,
                                 max_information_sets=max_information_sets,checkpoint_every=checkpoint_every))
         if traversal!='external-v1':
             result.update(traversal_stats=solver.traversal_stats,traversal_stats_started_at=(saved['iterations'] if fork_traversal else saved.get('traversal_stats_started_at',saved['iterations'])) if resume else 0)
+            result.update(sampling_diagnostics_schema='actual-actions-v2',sampling_diagnostics_started_at=saved.get('sampling_diagnostics_started_at',saved['iterations']) if resume else 0)
         if traversal=='prefix-v3':result['epoch_weight_moments']=solver.epoch_weight_moments
         # Keep the last complete checkpoint as recovery if replacement/disk write fails.
         if Path(path).exists():
