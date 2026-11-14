@@ -96,3 +96,20 @@ Report paired changes within each fixed opponent population instead. The check
 is exploratory, not a new passed gate or final-test certification; final-test
 seed 6,100,000 remains untouched. It runs evaluation-only workers under 3 GiB
 limits, output locks, atomic validation and the overnight deadline.
+
+## Separate continuation of the validation lineage
+
+`scripts.extended_validation_check` resumes the original independent 250-iteration
+validator into a NEW 750-iteration checkpoint under
+`runs/bot/validation-extended-001`. It preserves its seed 900001, uniform averaging
+sampler, zero historical-population probability, archive settings, original
+250,000-set cap, 500,000-node cap and 3 GiB worker protection. The original file
+is hash-checked and never overwritten. A budget stop halts for investigation.
+
+The new snapshot is frozen, screened against independent A1000 and scripted
+populations, then used for separate paired comparisons of each2000 candidate
+with its own1500parent and uniform control. Seed5900000,1000blocks, one copy,
+atomic verified reports, deadline17:31UTC. It shares no training with candidates.
+This adds screening diversity/compute, not an established strong opponent or a
+replacement for the original gate. Keep lineage/seed/coverage/uncertainty and
+all regressions visible. No live OpenPoker configuration or final-test seed changes.
