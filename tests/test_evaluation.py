@@ -38,3 +38,15 @@ def test_evaluation_coverage_reconciles_by_street():
         assert sum(counts[key] for key in ('missing_rows', 'zero_weight_rows', 'positive_weight_rows')) == counts['decisions']
         assert population['uniform_fallback_fraction'] == (counts['missing_rows'] + counts['zero_weight_rows']) / counts['decisions']
         assert population['latency_scope'] == 'all_table_decisions'
+
+
+def test_live_fallback_matches_adapter_rules():
+    from poker.evaluate import LiveFallbackPolicy
+    from poker.cfr import CFRPolicy
+    from poker.game import Game
+    from dataclasses import replace
+    policy=LiveFallbackPolicy(CFRPolicy({},abstraction='texture-buckets-v2'))
+    o=Game(1).observe()
+    assert policy.act(replace(o,call=2,legal=('call','fold',4)))=='fold'
+    assert policy.act(replace(o,call=0,legal=('call',4)))=='call'
+    assert policy.act(replace(o,call=2,legal=('call',)))=='call'

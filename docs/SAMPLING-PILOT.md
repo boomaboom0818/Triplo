@@ -33,3 +33,20 @@ Passing requires review before a bounded 1,000-iteration confirmation stage;
 sustained training follows only if that confirmation retains coverage, payoff
 and resource evidence. Failed/inconclusive results do not authorize automatic
 scaling or relaxed resource limits.
+
+## Authorized exploratory continuation
+
+After reviewing the failed 250-iteration payoff screen, the user authorized
+continued bounded training on 2026-11-14. `scripts/sampling_curve.py` resumes the
+unchanged recipe into new 500/750/1,000 checkpoints, with a one-hour allowance
+per 250-iteration increment and unchanged memory/node/table protections.
+This is an exploratory learning curve, not a passed promotion gate.
+
+At 500 and 1,000, evaluate against the retained 250-iteration parent and uniform
+control using shared seed 5,300,000 and 1,000 deal blocks. Record action counts to
+investigate the tight-script gap. Also evaluate the OpenPoker check/fold/call
+fallback separately; paired differences for that mode measure the combined
+policy/fallback change, not training alone. Live results are observational and
+must not be pooled with controlled local results. The client now logs checkpoint
+hash, coverage and action type, never cards or authentication tokens. Running
+local experiments does not start or restart a live OpenPoker client.

@@ -1,4 +1,5 @@
 """Snapshot-driven OpenPoker V2 adapter. Run with python -m scripts.openpoker_client."""
+import hashlib
 import argparse
 import asyncio
 import json
@@ -71,6 +72,7 @@ def decision(snapshot, policy):
         action = 'call' if passive == 'check' else 'fold' if 'fold' in offered else 'call'
     else:
         action = policy.act(observation)
+    LOG.info('Decision street=%s active=%s covered=%s action=%s',street,sum(observation.active),bool(row and any(row)),wire[action]['action'])
     return dict(type='action', hand_id=hand, turn_token=token,
                 client_action_id=str(uuid4()), **wire[action])
 
@@ -159,6 +161,7 @@ def main():
     if not key:
         parser.error('set OPEN_POKER_API_KEY in the environment')
     logging.basicConfig(level=logging.INFO)
+    LOG.info('Checkpoint sha256=%s abstraction=%s iterations=%s fallback=check-fold-call',hashlib.sha256(args.checkpoint.read_bytes()).hexdigest(),saved['abstraction'],saved['iterations'])
     policy = CFRPolicy(saved['sums'], args.seed, saved['abstraction'])
     try:
         asyncio.run(run(args, policy, key))
