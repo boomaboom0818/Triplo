@@ -116,6 +116,7 @@ result is not enough. No statistically established best checkpoint was selected.
 - POPULATION-PILOT.md: controlled curriculum protocol and recovery.
 - runs/bot/overnight-2026-11-14/journal.md: timestamped monitoring/recovery record.
 
-Schedule state will be recorded after disabling recurring checks: all authorized
-local runs and the handoff are complete; playing-strength limitations remain
-explicit rather than triggering unbounded blind training.
+Schedule state confirmed at 2026-11-14T17:28:13.291626+00:00: recurring checks and the morning checkpoint
+are disabled, and no trainer/evaluator is active. All current authorized local
+runs and the handoff are complete. Playing-strength limitations remain explicit;
+no unbounded blind training or statistical promotion was triggered.
