@@ -161,3 +161,11 @@ Each stage and the original 5,000-iteration baseline receive one/three-copy
 Promotion requires the coverage and payoff review above. The current aggregate
 reports do not provide paired per-deal differences, so close/inconclusive results
 must trigger further evaluation instrumentation rather than automatic promotion.
+
+Recovery: the first v2 1,000-iteration stage reached its 1,800-second invocation
+budget at iteration 987 and saved successfully. Both controls and both v2
+250-iteration stages and their evaluations were complete. The runner now supports
+`--resume --max-seconds 3600`, validates checkpoint learning configuration and
+completed report hashes, skips completed work and appends training logs. Memory,
+node and table caps remain unchanged. Budget failures other than time are refused
+for incomplete-checkpoint resume pending investigation.
