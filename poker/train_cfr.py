@@ -31,16 +31,16 @@ def run_lock(path):
 def train(iterations,path,seed=1,game='kuhn',players=6,resume=None,*,
           checkpoint_every=100,max_iteration_nodes=100000,max_seconds=3600,
           max_information_sets=500000,abstraction="exact-observation-v1",
-          population_probability=0.0,archive_every=100,archive_size=4,averaging_sampler="uniform"):
+          population_probability=0.0,archive_every=100,archive_size=4,averaging_sampler="uniform",opponent_population="historical-v1",fork_population=False):
     with run_lock(path):
         return _train(iterations,path,seed,game,players,resume,checkpoint_every,
                       max_iteration_nodes,max_seconds,max_information_sets,abstraction,
-                      population_probability,archive_every,archive_size,averaging_sampler)
+                      population_probability,archive_every,archive_size,averaging_sampler,opponent_population,fork_population)
 
 
 def _train(iterations,path,seed,game,players,resume,checkpoint_every,
            max_iteration_nodes,max_seconds,max_information_sets,abstraction,
-           population_probability,archive_every,archive_size,averaging_sampler):
+           population_probability,archive_every,archive_size,averaging_sampler,opponent_population,fork_population):
     if abstraction not in ("exact-observation-v1",VERSION,VERSION_V2):raise ValueError("unsupported abstraction")
     if not 0<=population_probability<=1:raise ValueError("invalid population probability")
     for value in (checkpoint_every,max_iteration_nodes,max_information_sets,archive_every,archive_size):
@@ -55,12 +55,25 @@ def _train(iterations,path,seed,game,players,resume,checkpoint_every,
         raise ValueError('output exists; use resume or a new path')
     if averaging_sampler not in ("uniform","call-mixture-v1"):raise ValueError("unsupported averaging sampler")
     if averaging_sampler!="uniform":config["averaging_sampler"]=averaging_sampler
+    if opponent_population not in ('historical-v1','diverse-v1'):raise ValueError('unsupported opponent population')
+    if opponent_population!='historical-v1':
+        if game!='holdem':raise ValueError('diverse profiles require holdem')
+        config['opponent_population']=opponent_population
+    if fork_population and (not resume or Path(path).resolve()==Path(resume).resolve()):
+        raise ValueError('population fork requires a new output and explicit parent')
+    recipe_fork=None
     solver=MCCFR(seed);solver.averaging_sampler=averaging_sampler;seconds=0;archive=[]
     solver.stop_requested=lambda: _STOP_REQUESTED
     if resume:
         saved=json.loads(Path(resume).read_text())
+        from .population import population_fork_allowed
+        compatible=saved.get('config')==config
+        if fork_population:
+            compatible=population_fork_allowed(saved.get('config',{}),config)
+            if compatible:recipe_fork=dict(parent_sha256=hashlib.sha256(Path(resume).read_bytes()).hexdigest(),parent_config=saved['config'],iterations=saved['iterations'],kind='explicit population-diversity fork')
+        else:recipe_fork=saved.get('recipe_fork')
         if (saved.get('schema')!=1 or saved.get('algorithm')!='external-sampling-mccfr-v1'
-                or saved.get('config')!=config or saved.get('model_id')!='bot-opponent-v1'):
+                or not compatible or saved.get('model_id')!='bot-opponent-v1'):
             raise ValueError('incompatible CFR checkpoint')
         solver.regrets=saved['regrets'];solver.sums=saved['sums'];archive=saved['archive']
         solver.rng.setstate(tuples(saved['rng']));solver.iterations=saved['iterations']
@@ -76,7 +89,7 @@ def _train(iterations,path,seed,game,players,resume,checkpoint_every,
     stop_reason='running'
     def save():
         result=dict(schema=1,algorithm='external-sampling-mccfr-v1',model_id='bot-opponent-v1',
-                    config=config,engine='pokerkit-0.7.7',abstraction=abstraction,archive=archive,
+                    config=config,recipe_fork=recipe_fork,engine='pokerkit-0.7.7',abstraction=abstraction,archive=archive,
                     iterations=solver.iterations,regrets=solver.regrets,sums=solver.sums,
                     rng=solver.rng.getstate(),nodes=solver.nodes,diagnostics=dict(solver.diagnostics),
                     average_weight_moments=solver.average_weight_moments,
@@ -108,6 +121,9 @@ def _train(iterations,path,seed,game,players,resume,checkpoint_every,
                 for player in range(config['players']):
                     if solver.rng.random()<population_probability:
                         opponents[player]=solver.rng.choice(archive)
+            if opponent_population=='diverse-v1':
+                for player in range(config['players']):
+                    if solver.rng.random()<.25:opponents[player]=solver.rng.choice(('passive-v1','pressure-v1'))
             try:solver.step(factory,config['players'],max_iteration_nodes,deadline,opponents)
             except BaseException:
                 solver.rng.setstate(rng_before);raise
@@ -141,17 +157,20 @@ if __name__=='__main__':
     p.add_argument('--archive-every',type=int,default=100)
     p.add_argument('--archive-size',type=int,default=4)
     p.add_argument('--averaging-sampler',choices=['uniform','call-mixture-v1'],default='uniform')
+    p.add_argument('--opponent-population',choices=['historical-v1','diverse-v1'],default='historical-v1')
+    p.add_argument('--fork-population',action='store_true')
     a=p.parse_args()
     settings=dict(iterations=a.iterations,seed=a.seed,game=a.game,players=a.players,
                   checkpoint_every=a.checkpoint_every,max_iteration_nodes=a.max_iteration_nodes,
                   max_seconds=a.max_seconds,max_information_sets=a.max_information_sets,
                   abstraction=a.abstraction,population_probability=a.population_probability,
-                  archive_every=a.archive_every,archive_size=a.archive_size,averaging_sampler=a.averaging_sampler)
+                  archive_every=a.archive_every,archive_size=a.archive_size,averaging_sampler=a.averaging_sampler,opponent_population=a.opponent_population)
     if a.config:
         cfg=json.loads(Path(a.config).read_text())
         cfg.setdefault('averaging_sampler','uniform')
+        cfg.setdefault('opponent_population','historical-v1')
         if cfg.pop('schema',None)!=1 or set(cfg)!=set(settings):raise ValueError('invalid CFR run config')
         settings=cfg  # Run configuration is authoritative; CLI output/resume remain independent.
     signal.signal(signal.SIGTERM,stop_signal)
     signal.signal(signal.SIGINT,stop_signal)
-    train(path=a.output,resume=a.resume,**settings)
+    train(path=a.output,resume=a.resume,fork_population=a.fork_population,**settings)

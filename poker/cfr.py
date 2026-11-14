@@ -63,7 +63,11 @@ class MCCFR:
         strategy=self.strategy(key,actions)
         if actor!=updater:
             frozen=getattr(self,'opponents',{}).get(actor)
-            if frozen is not None:strategy=normalize(frozen.get(key,[0.0]*len(actions)))
+            if isinstance(frozen,str):
+                from .population import profile_strategy
+                strategy=profile_strategy(state.game.observe(),frozen)
+                getattr(self,'pending_diagnostics',self.diagnostics)[f'population:{frozen}:sampled_actions']+=1
+            elif frozen is not None:strategy=normalize(frozen.get(key,[0.0]*len(actions)))
             return self.regret(state.child(self.rng.choices(actions,strategy)[0]),updater,delta)
         values=[self.regret(state.child(a),updater,delta) for a in actions]
         value=sum(p*v for p,v in zip(strategy,values))
