@@ -109,3 +109,23 @@ output writers with a resumed supervisor. It never trains or modifies checkpoint
 Its wait is bounded by the overnight deadline and it reports missing snapshots if
 the main curve stops. A running evaluation may finish after the wait deadline;
 the overnight finalizer is responsible for stopping active workers at the cutoff.
+
+## Independent development check at 1,000 iterations
+
+`scripts.confirm_curve` waits for each completed 1,000 checkpoint and evaluates
+it, its untouched 250-iteration parent and a uniform-policy control on shared
+seed 5,500,000 with 2,000 independent deal blocks. This seed range was not used
+for the preceding selection and does not touch final-test seed 6,100,000.
+Outputs go to `runs/bot/confirmation-001` under separate supervisor/report locks.
+The process is evaluation-only, with 3 GiB child limits, validated atomic reports,
+paired whole-deal differences, recorded checkpoint/parent/validation hashes and
+the overnight deadline. It stops for investigation on failure rather than retrying.
+
+Predeclared primary review: paired learned-opponent improvements versus parent
+and uniform both have lower nominal 95% bounds above zero for each learner,
+plus >=5% positive-weight postflop coverage and >=200 postflop decisions in
+calling, mixed and learned populations. All other population results remain
+reported for regressions. Passing is fresh development evidence, not final-test
+certification or established competitive strength. The small tight-script gap and
+OpenPoker fallback effects still require separate review. Do not silently relax
+a failed two-seed gate or pool live results with these controlled measurements.

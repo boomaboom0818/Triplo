@@ -34,3 +34,18 @@ def test_timeout_signals_then_waits_for_checkpoint(tmp_path,monkeypatch):
     with pytest.raises(TimeoutError):runner.run_child(['poker.train_cfr'],tmp_path/'log',time.time()+10)
     assert ('signal',signal.SIGTERM) in events
     assert ('wait',120) in events
+
+
+def test_evaluation_uses_declared_block_count(tmp_path,monkeypatch):
+    import json
+    checkpoint=tmp_path/'checkpoint';checkpoint.write_text('candidate')
+    validation=tmp_path/'validation';validation.write_text('opponent')
+    def fake_run(args,output,deadline):
+        assert args[args.index('--blocks')+1]=='2000'
+        row={'independent_deal_blocks':2000,'deal_block_bb_per_100':[0]*2000}
+        output.write_text(json.dumps(dict(checkpoint_sha256=runner.digest(checkpoint),seed=5500000,copies=1,uniform_control=False,live_fallback=False,opponent_checkpoint_hashes=['checkpoint:'+runner.digest(validation)],populations={str(i):row for i in range(6)})))
+    monkeypatch.setattr(runner,'run_child',fake_run)
+    report=runner.evaluate(checkpoint,tmp_path/'report.json',validation,5500000,False,time.time()+10,blocks=2000)
+    assert report['populations']['0']['independent_deal_blocks']==2000
+    with pytest.raises(ValueError,match='provenance'):
+        runner.evaluate(checkpoint,tmp_path/'report.json',validation,5500000,False,time.time()+10,blocks=1000)
