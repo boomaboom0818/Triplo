@@ -15,6 +15,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from .cfr import MCCFR,Kuhn,Holdem,TraversalLimit
 from .trajectory import TrajectoryMCCFR,ALGORITHM as TRAJECTORY_ALGORITHM,AVERAGING as TRAJECTORY_AVERAGING,fork_allowed
+from .prefix import PrefixMCCFR,ALGORITHM as PREFIX_ALGORITHM,fork_allowed as prefix_fork_allowed
 from .train import atomic_save,tuples
 
 _STOP_REQUESTED=False
@@ -33,18 +34,18 @@ def train(iterations,path,seed=1,game='kuhn',players=6,resume=None,*,
           checkpoint_every=100,max_iteration_nodes=100000,max_seconds=3600,
           max_information_sets=500000,abstraction="exact-observation-v1",
           population_probability=0.0,archive_every=100,archive_size=4,averaging_sampler="uniform",opponent_population="historical-v1",fork_population=False,
-          traversal='external-v1',trajectory_samples=8,fork_traversal=False):
+          traversal='external-v1',trajectory_samples=8,fork_traversal=False,regret_prefix_depth=2):
     with run_lock(path):
         return _train(iterations,path,seed,game,players,resume,checkpoint_every,
                       max_iteration_nodes,max_seconds,max_information_sets,abstraction,
                       population_probability,archive_every,archive_size,averaging_sampler,opponent_population,fork_population,
-                      traversal,trajectory_samples,fork_traversal)
+                      traversal,trajectory_samples,fork_traversal,regret_prefix_depth)
 
 
 def _train(iterations,path,seed,game,players,resume,checkpoint_every,
            max_iteration_nodes,max_seconds,max_information_sets,abstraction,
            population_probability,archive_every,archive_size,averaging_sampler,opponent_population,fork_population,
-           traversal,trajectory_samples,fork_traversal):
+           traversal,trajectory_samples,fork_traversal,regret_prefix_depth):
     if abstraction not in ("exact-observation-v1",VERSION,VERSION_V2):raise ValueError("unsupported abstraction")
     if not 0<=population_probability<=1:raise ValueError("invalid population probability")
     for value in (checkpoint_every,max_iteration_nodes,max_information_sets,archive_every,archive_size):
@@ -57,13 +58,16 @@ def _train(iterations,path,seed,game,players,resume,checkpoint_every,
                 archive_every=archive_every,archive_size=archive_size)
     if Path(path).exists() and (resume is None or Path(path).resolve()!=Path(resume).resolve()):
         raise ValueError('output exists; use resume or a new path')
-    if traversal not in ('external-v1','trajectory-v2'):raise ValueError('unsupported traversal')
-    algorithm='external-sampling-mccfr-v1' if traversal=='external-v1' else TRAJECTORY_ALGORITHM
+    if traversal not in ('external-v1','trajectory-v2','prefix-v3'):raise ValueError('unsupported traversal')
+    algorithm={'external-v1':'external-sampling-mccfr-v1','trajectory-v2':TRAJECTORY_ALGORITHM,'prefix-v3':PREFIX_ALGORITHM}[traversal]
     if averaging_sampler not in ("uniform","call-mixture-v1",TRAJECTORY_AVERAGING):raise ValueError("unsupported averaging sampler")
-    if (traversal=='trajectory-v2')!=(averaging_sampler==TRAJECTORY_AVERAGING):raise ValueError('traversal/averaging version mismatch')
-    if traversal=='trajectory-v2':
+    if (traversal!='external-v1')!=(averaging_sampler==TRAJECTORY_AVERAGING):raise ValueError('traversal/averaging version mismatch')
+    if traversal!='external-v1':
         if type(trajectory_samples) is not int or not 1<=trajectory_samples<=64:raise ValueError('invalid trajectory sample count')
         config.update(traversal=traversal,trajectory_samples=trajectory_samples)
+    if traversal=='prefix-v3':
+        if type(regret_prefix_depth) is not int or regret_prefix_depth not in (1,2):raise ValueError('invalid regret prefix depth')
+        config['regret_prefix_depth']=regret_prefix_depth
     if averaging_sampler!="uniform":config["averaging_sampler"]=averaging_sampler
     if opponent_population not in ('historical-v1','diverse-v1'):raise ValueError('unsupported opponent population')
     if opponent_population!='historical-v1':
@@ -74,7 +78,7 @@ def _train(iterations,path,seed,game,players,resume,checkpoint_every,
     if fork_traversal and (fork_population or not resume or Path(path).resolve()==Path(resume).resolve()):
         raise ValueError('traversal fork requires a new output, explicit parent and no population change')
     recipe_fork=None
-    solver=TrajectoryMCCFR(seed,trajectory_samples) if traversal=='trajectory-v2' else MCCFR(seed)
+    solver=PrefixMCCFR(seed,trajectory_samples,regret_prefix_depth) if traversal=='prefix-v3' else TrajectoryMCCFR(seed,trajectory_samples) if traversal=='trajectory-v2' else MCCFR(seed)
     solver.averaging_sampler=averaging_sampler;seconds=0;archive=[]
     solver.stop_requested=lambda: _STOP_REQUESTED
     if resume:
@@ -85,10 +89,10 @@ def _train(iterations,path,seed,game,players,resume,checkpoint_every,
             compatible=population_fork_allowed(saved.get('config',{}),config)
             if compatible:recipe_fork=dict(parent_sha256=hashlib.sha256(Path(resume).read_bytes()).hexdigest(),parent_config=saved['config'],iterations=saved['iterations'],kind='explicit population-diversity fork')
         elif fork_traversal:
-            compatible=saved.get('algorithm')=='external-sampling-mccfr-v1' and fork_allowed(saved.get('config',{}),config)
-            if compatible:recipe_fork=dict(parent_sha256=hashlib.sha256(Path(resume).read_bytes()).hexdigest(),parent_algorithm=saved['algorithm'],parent_config=saved['config'],iterations=saved['iterations'],kind='explicit trajectory-v2 fork',previous_recipe_fork=saved.get('recipe_fork'))
+            compatible=(traversal=='trajectory-v2' and saved.get('algorithm')=='external-sampling-mccfr-v1' and fork_allowed(saved.get('config',{}),config)) or (traversal=='prefix-v3' and saved.get('algorithm')==TRAJECTORY_ALGORITHM and prefix_fork_allowed(saved.get('config',{}),config))
+            if compatible:recipe_fork=dict(parent_sha256=hashlib.sha256(Path(resume).read_bytes()).hexdigest(),parent_algorithm=saved['algorithm'],parent_config=saved['config'],iterations=saved['iterations'],kind=f'explicit {traversal} fork',previous_recipe_fork=saved.get('recipe_fork'))
         else:recipe_fork=saved.get('recipe_fork')
-        expected_algorithm='external-sampling-mccfr-v1' if fork_traversal else algorithm
+        expected_algorithm=TRAJECTORY_ALGORITHM if fork_traversal and traversal=='prefix-v3' else 'external-sampling-mccfr-v1' if fork_traversal else algorithm
         if (saved.get('schema')!=1 or saved.get('algorithm')!=expected_algorithm
                 or not compatible or saved.get('model_id')!='bot-opponent-v1'):
             raise ValueError('incompatible CFR checkpoint')
@@ -97,7 +101,8 @@ def _train(iterations,path,seed,game,players,resume,checkpoint_every,
         solver.nodes=saved['nodes'];seconds=saved['seconds']
         solver.diagnostics.update(saved.get('diagnostics',{}))
         solver.average_weight_moments=saved.get('average_weight_moments',{})
-        if traversal=='trajectory-v2' and 'traversal_stats' in saved:solver.traversal_stats=saved['traversal_stats']
+        if traversal!='external-v1' and not fork_traversal and 'traversal_stats' in saved:solver.traversal_stats=saved['traversal_stats']
+        if traversal=='prefix-v3' and not fork_traversal:solver.epoch_weight_moments=saved.get('epoch_weight_moments',{})
     if iterations<=solver.iterations:raise ValueError('target must exceed completed iterations')
     try:revision=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
     except (OSError,subprocess.CalledProcessError):revision='unknown'
@@ -116,8 +121,9 @@ def _train(iterations,path,seed,game,players,resume,checkpoint_every,
                     stop_reason=stop_reason,provenance=dict(revision=revision,python=platform.python_version(),source_sha256=source_hashes),
                     limits=dict(max_iteration_nodes=max_iteration_nodes,max_seconds=max_seconds,
                                 max_information_sets=max_information_sets,checkpoint_every=checkpoint_every))
-        if traversal=='trajectory-v2':
-            result.update(traversal_stats=solver.traversal_stats,traversal_stats_started_at=saved.get('traversal_stats_started_at',saved['iterations']) if resume else 0)
+        if traversal!='external-v1':
+            result.update(traversal_stats=solver.traversal_stats,traversal_stats_started_at=(saved['iterations'] if fork_traversal else saved.get('traversal_stats_started_at',saved['iterations'])) if resume else 0)
+        if traversal=='prefix-v3':result['epoch_weight_moments']=solver.epoch_weight_moments
         # Keep the last complete checkpoint as recovery if replacement/disk write fails.
         if Path(path).exists():
             shutil.copyfile(path,str(path)+'.previous.tmp')
@@ -179,8 +185,9 @@ if __name__=='__main__':
     p.add_argument('--averaging-sampler',choices=['uniform','call-mixture-v1',TRAJECTORY_AVERAGING],default='uniform')
     p.add_argument('--opponent-population',choices=['historical-v1','diverse-v1'],default='historical-v1')
     p.add_argument('--fork-population',action='store_true')
-    p.add_argument('--traversal',choices=['external-v1','trajectory-v2'],default='external-v1')
+    p.add_argument('--traversal',choices=['external-v1','trajectory-v2','prefix-v3'],default='external-v1')
     p.add_argument('--trajectory-samples',type=int,default=8)
+    p.add_argument('--regret-prefix-depth',type=int,default=2)
     p.add_argument('--fork-traversal',action='store_true')
     a=p.parse_args()
     settings=dict(iterations=a.iterations,seed=a.seed,game=a.game,players=a.players,
@@ -188,13 +195,14 @@ if __name__=='__main__':
                   max_seconds=a.max_seconds,max_information_sets=a.max_information_sets,
                   abstraction=a.abstraction,population_probability=a.population_probability,
                   archive_every=a.archive_every,archive_size=a.archive_size,averaging_sampler=a.averaging_sampler,opponent_population=a.opponent_population,
-                  traversal=a.traversal,trajectory_samples=a.trajectory_samples)
+                  traversal=a.traversal,trajectory_samples=a.trajectory_samples,regret_prefix_depth=a.regret_prefix_depth)
     if a.config:
         cfg=json.loads(Path(a.config).read_text())
         cfg.setdefault('averaging_sampler','uniform')
         cfg.setdefault('opponent_population','historical-v1')
         cfg.setdefault('traversal','external-v1')
         cfg.setdefault('trajectory_samples',8)
+        cfg.setdefault('regret_prefix_depth',2)
         if cfg.pop('schema',None)!=1 or set(cfg)!=set(settings):raise ValueError('invalid CFR run config')
         settings=cfg  # Run configuration is authoritative; CLI output/resume remain independent.
     signal.signal(signal.SIGTERM,stop_signal)

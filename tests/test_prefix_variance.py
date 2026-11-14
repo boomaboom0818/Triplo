@@ -2,6 +2,7 @@ from itertools import product
 import pytest
 from poker.cfr import TraversalLimit
 from scripts.prefix_variance import PrefixMCCFR
+from poker.prefix import PrefixMCCFR as ProductionPrefix
 
 
 class Toy:
@@ -29,11 +30,12 @@ def exact(solver,state,delta,reach=1.):
 
 @pytest.mark.parametrize('depth,draws',[(0,3),(1,4),(2,2)])
 @pytest.mark.parametrize('root',[[1,3],[0,3]])
-def test_prefix_estimates_exact_regret_expectation(depth,draws,root):
-    reference=PrefixMCCFR(depth=depth);reference.regrets={str(()):root,str((0,)):[2,1]}
+@pytest.mark.parametrize('implementation',[PrefixMCCFR,ProductionPrefix])
+def test_prefix_estimates_exact_regret_expectation(depth,draws,root,implementation):
+    reference=implementation(depth=depth);reference.regrets={str(()):root,str((0,)):[2,1]}
     expected={};value=exact(reference,Toy(),expected);actual={};mean=0;p=0
     for path in product(range(2),repeat=draws):
-        s=PrefixMCCFR(depth=depth);s.regrets=reference.regrets;s.rng=RNG(path);delta={}
+        s=implementation(depth=depth);s.regrets=reference.regrets;s.rng=RNG(path);delta={}
         v=s.outcome(Toy(),0,delta);q=s.rng.p;mean+=q*v;p+=q
         for key,row in delta.items():
             dest=actual.setdefault(key,[0.,0.])
@@ -42,8 +44,9 @@ def test_prefix_estimates_exact_regret_expectation(depth,draws,root):
     for key in expected:assert actual[key]==pytest.approx(expected[key])
 
 
-def test_prefix_budget_rolls_back_and_depth_is_bounded():
-    s=PrefixMCCFR(depth=2);before=s.rng.getstate()
+@pytest.mark.parametrize('implementation',[PrefixMCCFR,ProductionPrefix])
+def test_prefix_budget_rolls_back_and_depth_is_bounded(implementation):
+    s=implementation(depth=2);before=s.rng.getstate()
     with pytest.raises(TraversalLimit):s.step(lambda seed:Toy(),2,max_nodes=2)
     assert s.rng.getstate()==before and s.regrets=={} and s.sums=={} and s.iterations==0
-    with pytest.raises(ValueError):PrefixMCCFR(depth=3)
+    with pytest.raises(ValueError):implementation(depth=3)

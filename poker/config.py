@@ -3,7 +3,7 @@ import json
 import math
 from pathlib import Path
 
-CFR_ALGORITHMS=('external-sampling-mccfr-v1','outcome-sampling-mccfr-v2')
+CFR_ALGORITHMS=('external-sampling-mccfr-v1','outcome-sampling-mccfr-v2','prefix-outcome-mccfr-v3')
 
 
 def load_config(path):
@@ -29,11 +29,14 @@ def load_checkpoint(path, *, model_id=None):
                 or checkpoint.get('config', {}).get('players') != 6):
             raise ValueError('evaluation requires a six-player holdem CFR checkpoint')
         cfg=checkpoint['config']
-        if checkpoint['algorithm']=='outcome-sampling-mccfr-v2':
+        if checkpoint['algorithm'] in ('outcome-sampling-mccfr-v2','prefix-outcome-mccfr-v3'):
             samples=cfg.get('trajectory_samples')
-            if (cfg.get('traversal')!='trajectory-v2' or cfg.get('averaging_sampler')!='trajectory-call-mixture-v2'
+            expected='prefix-v3' if checkpoint['algorithm']=='prefix-outcome-mccfr-v3' else 'trajectory-v2'
+            if (cfg.get('traversal')!=expected or cfg.get('averaging_sampler')!='trajectory-call-mixture-v2'
                     or type(samples) is not int or not 1<=samples<=64):
                 raise ValueError('invalid trajectory checkpoint metadata')
+            if expected=='prefix-v3' and (type(cfg.get('regret_prefix_depth')) is not int or cfg['regret_prefix_depth'] not in (1,2)):
+                raise ValueError('invalid prefix checkpoint metadata')
         elif cfg.get('traversal','external-v1')!='external-v1' or cfg.get('averaging_sampler')=='trajectory-call-mixture-v2':
             raise ValueError('CFR algorithm/traversal mismatch')
         for name in ('regrets','sums'):

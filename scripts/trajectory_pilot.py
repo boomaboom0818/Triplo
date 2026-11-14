@@ -17,11 +17,23 @@ ADDITIONS=[50,250,750,1500]
 VALIDATION=workers.VALIDATION
 ROBUSTNESS=workers.ROBUSTNESS
 CRITERIA=Path('docs/TRAVERSAL-PILOT.md')
+TRAVERSAL='trajectory-v2'
+PREFIX_DEPTH=None
+EXPECTED_BASES=[2606,2850]
+SCREEN_SEED=8300000
+CONFIRM_SEED=8400000
+ADDITIONAL_SOURCES=[]
+
+
+def recipe(saved):
+    result={**saved['config'],'traversal':TRAVERSAL,'trajectory_samples':8,'averaging_sampler':AVERAGING}
+    if PREFIX_DEPTH is not None:result['regret_prefix_depth']=PREFIX_DEPTH
+    return result
 
 
 def config(saved,target):
     cfg=stage_config(saved,target)
-    cfg.update(traversal='trajectory-v2',trajectory_samples=8,averaging_sampler=AVERAGING)
+    cfg.update(recipe(saved))
     return cfg
 
 
@@ -68,10 +80,10 @@ def main(deadline,resume=False):
     with run_lock(ROOT/'supervisor'):
         inputs=[*PARENTS,VALIDATION,*ROBUSTNESS]
         manifest=dict(algorithm=ALGORITHM,parents=[str(p) for p in PARENTS],additions=ADDITIONS,samples=8,
-            deadline=deadline.isoformat(),screen_seed=8300000,screen_blocks=200,confirm_seed=8400000,confirm_blocks=2000,
+            deadline=deadline.isoformat(),screen_seed=SCREEN_SEED,screen_blocks=200,confirm_seed=CONFIRM_SEED,confirm_blocks=2000,
             inputs=[dict(path=str(p.resolve()),sha256=digest(p)) for p in inputs],
             criteria=str(CRITERIA),criteria_sha256=digest(CRITERIA),
-            sources={str(p):digest(p) for p in [*sorted(Path('poker').glob('*.py')),Path(__file__),Path(workers.__file__),Path('scripts/limited_worker.py'),Path('scripts/sustained_train.py')]})
+            sources={str(p):digest(p) for p in [*sorted(Path('poker').glob('*.py')),Path(__file__),Path(workers.__file__),Path('scripts/limited_worker.py'),Path('scripts/sustained_train.py'),*ADDITIONAL_SOURCES]})
         path=ROOT/'manifest.json'
         if path.exists():
             if not resume or json.loads(path.read_text())!=manifest:raise ValueError('existing/mismatched pilot manifest')
@@ -82,8 +94,8 @@ def main(deadline,resume=False):
             bases=[];expected=[]
             for i,p in enumerate(PARENTS):
                 s=load_checkpoint(p,model_id='bot-opponent-v1');bases.append(s['iterations'])
-                e={**s['config'],'traversal':'trajectory-v2','trajectory_samples':8,'averaging_sampler':AVERAGING}
-                if s['iterations']!=(2606,2850)[i] or not fork_allowed(s['config'],e):raise ValueError('unexpected source recipe/state')
+                e=recipe(s)
+                if s['iterations']!=EXPECTED_BASES[i] or not fork_allowed(s['config'],e):raise ValueError('unexpected source recipe/state')
                 expected.append(e)
                 del s
             for index,addition in enumerate(ADDITIONS):
@@ -113,7 +125,7 @@ def main(deadline,resume=False):
                     del s
                     requests.extend([dict(checkpoint=p,opponent=VALIDATION,uniform=False,output=ROOT/f'candidate-{i}-plus-{addition}-screen.json'),dict(checkpoint=parent,opponent=VALIDATION,uniform=False,output=ROOT/f'candidate-{i}-baseline-screen.json')])
                 atomic_save(ROOT/'status.json',dict(status='screening',added_iterations=addition))
-                evaluate_requests(requests,deadline.timestamp(),8300000,200)
+                evaluate_requests(requests,deadline.timestamp(),SCREEN_SEED,200)
                 screens={}
                 for i in range(2):
                     candidate=json.loads((ROOT/f'candidate-{i}-plus-{addition}-screen.json').read_text())
@@ -123,13 +135,13 @@ def main(deadline,resume=False):
                     atomic_save(ROOT/f'candidate-{i}-plus-{addition}-screen-paired.json',screens[str(i)])
                 # Screening only stops for clear harmful evidence, never promotes.
                 if any(v['ci95'][1]<-10 for row in screens.values() for v in row['paired'].values()):raise RuntimeError('screening detected material regression; investigate before further training')
-            verify(manifest);requests=[]
+            verify(manifest);requests=[];last=ADDITIONS[-1]
             for i,parent in enumerate(PARENTS):
                 for population,opponent in [('validation',VALIDATION),('independent',ROBUSTNESS[i])]:
-                    for kind,checkpoint in [('candidate',ROOT/f'candidate-{i}-plus-1500.json'),('baseline',parent),('uniform',ROOT/f'candidate-{i}-plus-1500.json')]:
+                    for kind,checkpoint in [('candidate',ROOT/f'candidate-{i}-plus-{last}.json'),('baseline',parent),('uniform',ROOT/f'candidate-{i}-plus-{last}.json')]:
                         requests.append(dict(checkpoint=checkpoint,opponent=opponent,uniform=kind=='uniform',output=ROOT/f'candidate-{i}-{population}-{kind}.json'))
             atomic_save(ROOT/'status.json',dict(status='confirmation'))
-            evaluate_requests(requests,deadline.timestamp(),8400000,2000)
+            evaluate_requests(requests,deadline.timestamp(),CONFIRM_SEED,2000)
             final={}
             for i in range(2):
                 final[str(i)]={}
@@ -147,8 +159,8 @@ def main(deadline,resume=False):
             operational=workers.resource_pass(metrics,min(row['mem_available_bytes'] for row in health),overlap)
             states=[]
             for i in range(2):
-                s=load_checkpoint(ROOT/f'candidate-{i}-plus-1500.json');sets=len(set(s['regrets'])|set(s['sums']))
-                operational=operational and sets<.8*s['limits']['max_information_sets'] and s['traversal_stats']['iterations']==1500
+                s=load_checkpoint(ROOT/f'candidate-{i}-plus-{last}.json');sets=len(set(s['regrets'])|set(s['sums']))
+                operational=operational and sets<.8*s['limits']['max_information_sets'] and s['traversal_stats']['iterations']==last
                 states.append(dict(candidate=i,sets=sets,limits=s['limits'],traversal_stats=s['traversal_stats']))
                 del s
             # Per invocation throughput includes checkpoint I/O; fixed before launch.
