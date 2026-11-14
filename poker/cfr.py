@@ -2,7 +2,7 @@
 
 Chance is sampled by the caller. Regret traversal enumerates updater actions and
 samples others on-policy. A separate averaging traversal enumerates owner actions
-and samples others uniformly, correcting their sampling reach. This avoids the
+and samples others with full support, correcting their sampling reach. This avoids the
 incorrect multiplayer 'simple averaging' shortcut.
 """
 import copy
@@ -25,7 +25,7 @@ class TraversalLimit(RuntimeError):
 class MCCFR:
     def __init__(self,seed=1):
         self.rng=Random(seed);self.regrets={};self.sums={};self.iterations=0
-        self.nodes=0;self.diagnostics=Counter()
+        self.nodes=0;self.diagnostics=Counter();self.average_weight_moments={}
 
     def visit(self):
         if getattr(self,"stop_requested",lambda:False)():raise KeyboardInterrupt
@@ -41,6 +41,14 @@ class MCCFR:
         kind='enumerated' if o.player==owner else 'sampled'
         key=f'{traversal}:street={o.street}:active={sum(o.active)}:{kind}'
         getattr(self,'pending_diagnostics',self.diagnostics)[key]+=1
+
+    def record_average_weight(self,state,weight):
+        if not hasattr(state,'game'):return
+        o=state.game.observe();key=f'street={o.street}:active={sum(o.active)}'
+        table=getattr(self,'pending_weight_moments',self.average_weight_moments)
+        row=table.setdefault(key,dict(updates=0,total=0.0,squared_total=0.0,maximum=0.0))
+        row['updates']+=1;row['total']+=weight;row['squared_total']+=weight*weight
+        row['maximum']=max(row['maximum'],weight)
 
     def strategy(self,key,actions):
         row=self.regrets.get(key,[0.0]*len(actions))
@@ -69,6 +77,7 @@ class MCCFR:
         self.record_visit(state,'average',owner)
         actor,key,actions=state.info();strategy=self.strategy(key,actions)
         if actor==owner:
+            self.record_average_weight(state,own_reach*inverse_sample)
             row=getattr(self,'pending_sums',self.sums).setdefault(key,[0.0]*len(actions))
             for i,p in enumerate(strategy):row[i]+=own_reach*inverse_sample*p
             for a,p in zip(actions,strategy):
@@ -87,7 +96,7 @@ class MCCFR:
         self.opponents=opponents or {}
         rng_state=self.rng.getstate(); old_nodes=self.nodes
         self.node_limit=None if max_nodes is None else self.nodes+max_nodes
-        self.deadline=deadline; self.pending_sums={};self.pending_diagnostics=Counter();delta={}
+        self.deadline=deadline; self.pending_sums={};self.pending_diagnostics=Counter();self.pending_weight_moments={};delta={}
         try:
             for player in range(players):
                 self.regret(factory(self.rng.randrange(2**63)),player,delta)
@@ -100,11 +109,16 @@ class MCCFR:
                 for key,values in updates.items():
                     row=destination.setdefault(key,[0.0]*len(values))
                     for i,v in enumerate(values):row[i]+=v
+            for key,values in self.pending_weight_moments.items():
+                row=self.average_weight_moments.setdefault(key,dict(updates=0,total=0.0,squared_total=0.0,maximum=0.0))
+                for field in ('updates','total','squared_total'):row[field]+=values[field]
+                row['maximum']=max(row['maximum'],values['maximum'])
             self.diagnostics.update(self.pending_diagnostics)
             self.iterations+=1
         finally:
             del self.pending_sums
             del self.pending_diagnostics
+            del self.pending_weight_moments
             self.node_limit=None;self.deadline=None
 
 

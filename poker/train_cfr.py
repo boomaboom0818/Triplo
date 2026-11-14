@@ -66,6 +66,7 @@ def _train(iterations,path,seed,game,players,resume,checkpoint_every,
         solver.rng.setstate(tuples(saved['rng']));solver.iterations=saved['iterations']
         solver.nodes=saved['nodes'];seconds=saved['seconds']
         solver.diagnostics.update(saved.get('diagnostics',{}))
+        solver.average_weight_moments=saved.get('average_weight_moments',{})
     if iterations<=solver.iterations:raise ValueError('target must exceed completed iterations')
     try:revision=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
     except (OSError,subprocess.CalledProcessError):revision='unknown'
@@ -78,6 +79,8 @@ def _train(iterations,path,seed,game,players,resume,checkpoint_every,
                     config=config,engine='pokerkit-0.7.7',abstraction=abstraction,archive=archive,
                     iterations=solver.iterations,regrets=solver.regrets,sums=solver.sums,
                     rng=solver.rng.getstate(),nodes=solver.nodes,diagnostics=dict(solver.diagnostics),
+                    average_weight_moments=solver.average_weight_moments,
+                    weight_diagnostics_started_at=saved.get('weight_diagnostics_started_at',saved['iterations']) if resume else 0,
                     diagnostics_started_at=saved.get('diagnostics_started_at',saved['iterations']) if resume else 0,seconds=seconds+time.perf_counter()-start,
                     stop_reason=stop_reason,provenance=dict(revision=revision,python=platform.python_version(),source_sha256=source_hashes),
                     limits=dict(max_iteration_nodes=max_iteration_nodes,max_seconds=max_seconds,
