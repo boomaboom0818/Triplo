@@ -77,7 +77,8 @@ def decision(snapshot, policy):
 
 def active_game(key):
     request = Request('https://api.openpoker.ai/api/me/active-game',
-                      headers={'Authorization': 'Bearer ' + key})
+                      headers={'Authorization': 'Bearer ' + key,
+                               'User-Agent': 'TriploPoker/0.1'})
     with urlopen(request, timeout=15) as response:
         return json.load(response)
 
