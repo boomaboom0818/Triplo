@@ -74,3 +74,25 @@ The updated runner evaluates all stages, including 750. A supervisor already
 running the earlier code continues its loaded implementation, so overnight
 monitoring supplies the missing 750-stage evaluations in that case. This change
 does not restart or modify an active learner's algorithm.
+
+## Verified stage review
+
+Run `python -m scripts.review_curve` to validate complete curve reports and publish
+`verified-review.json`. The reader leaves active/empty legacy evaluation outputs
+alone and checks checkpoint/opponent hashes, evaluation modes, shared deal design
+and sample counts before comparison. The review distinguishes training-versus-
+parent differences from a same-checkpoint live-fallback difference, and records
+tight-population action counts. This prevents an apparent live-policy change from
+being attributed solely to more training. Bootstrap inputs now reject non-finite,
+boolean or miscounted payoff samples.
+
+First overnight review: candidate A's 500-iteration standard policy has positive
+nominal paired learned-opponent intervals versus its 250 parent and uniform
+control on development seed 5,300,000. Candidate B's evaluation was still pending;
+this single-stage, selected development result is not a replicated promotion or a
+competitive-strength claim. The tight-script gap persists: covered preflop
+folding increases, whereas that trivial script rewards indiscriminate aggression.
+The OpenPoker-style check/fold/call fallback folds many additional uncovered
+preflop states and materially changes this matchup. Keep live checkpoint/fallback
+changes separate from the training recipe and do not deploy a fallback change
+based on this scripted result alone.

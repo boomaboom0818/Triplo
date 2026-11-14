@@ -48,3 +48,9 @@ def test_uniform_evaluation_records_paired_samples():
         assert v['covered_candidate_decisions']==0
         assert v['uniform_fallback_fraction']==1
         assert sum(x['decisions'] for x in v['postflop_coverage_by_active'].values())==sum(x['decisions'] for k,x in v['coverage_by_street'].items() if k!='0')
+
+
+@pytest.mark.parametrize('values,count', [([float('nan'),1],2),([float('inf'),1],2),([True,1],2),([1,2],3)])
+def test_paired_rejects_corrupted_samples(values,count):
+    def report(v,n):return dict(seed=1,copies=1,opponent_checkpoint_hashes=[],populations={'x':{'deal_block_bb_per_100':v,'independent_deal_blocks':n}})
+    with pytest.raises(ValueError):paired_difference(report(values,count),report([0,0],2))
