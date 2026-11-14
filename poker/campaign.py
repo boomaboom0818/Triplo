@@ -16,13 +16,14 @@ def child_limits():
     os.nice(10)
 
 
-def campaign(output,targets,blocks=200):
+def campaign(output,targets,blocks=200,resume=False):
     root=Path(output).resolve()
-    if root.exists():raise ValueError('campaign directory already exists')
+    if root.exists() and not resume:raise ValueError('campaign directory already exists; use --resume')
+    if resume and not (root/'manifest.json').exists():raise ValueError('campaign manifest missing')
     if blocks<2:raise ValueError('at least two evaluation blocks required')
     if not targets or targets!=sorted(set(targets)) or targets[0]<1:
         raise ValueError('targets must be positive, unique and increasing')
-    root.mkdir(parents=True)
+    root.mkdir(parents=True,exist_ok=resume)
     children=[]
     def terminate(signum,frame):
         for process in list(children):
@@ -36,6 +37,10 @@ def campaign(output,targets,blocks=200):
                    max_information_sets=250000,checkpoint_every=50,max_seconds=86400,
                    max_iteration_nodes=500000)
         configs[name]=cfg
+    if resume:
+        saved=json.loads((root/'manifest.json').read_text())
+        if saved['targets']!=targets or saved['blocks']!=blocks or saved['configs']!=configs:
+            raise ValueError('campaign resume configuration mismatch')
     atomic_save(root/'manifest.json',dict(pid=os.getpid(),targets=targets,blocks=blocks,configs=configs,
         memory_limit_per_worker_bytes=3*1024**3,validation_frozen_at=targets[0],
         warning='Independent learned validation agent has no established strength'))
@@ -55,6 +60,11 @@ def campaign(output,targets,blocks=200):
                 cfg=configs[name].copy();cfg['iterations']=stage
                 cfg_path=root/f'{name}-{stage}-config.json';atomic_save(cfg_path,cfg)
                 checkpoint=root/f'{name}-{stage}.json'
+                if checkpoint.exists():
+                    existing=json.loads(checkpoint.read_text())
+                    if existing['iterations']==stage:
+                        previous[name]=checkpoint;continue
+                    previous[name]=checkpoint
                 args=['poker.train_cfr','--config',str(cfg_path),'--output',str(checkpoint)]
                 if name in previous:args+=['--resume',str(previous[name])]
                 jobs[name]=(command(args,f'{name}.log'),checkpoint)
@@ -91,4 +101,5 @@ if __name__=='__main__':
     p.add_argument('--output',required=True)
     p.add_argument('--targets',type=int,nargs='+',default=[250,1000,5000])
     p.add_argument('--blocks',type=int,default=200)
-    a=p.parse_args();campaign(a.output,a.targets,a.blocks)
+    p.add_argument('--resume',action='store_true')
+    a=p.parse_args();campaign(a.output,a.targets,a.blocks,a.resume)
