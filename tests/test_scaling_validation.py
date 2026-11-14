@@ -110,3 +110,25 @@ def test_two_evaluators_keep_three_gib_caps(tmp_path,monkeypatch):
     jobs=[{'module':'poker.evaluate','output':tmp_path/f'{i}.json','log':tmp_path/f'{i}.pending','metrics':tmp_path/f'{i}.metrics','args':[]} for i in range(2)]
     scaling.run_pair(jobs,__import__('time').time()+60)
     assert captured==[3*1024**3,3*1024**3]
+
+
+def test_zero_exit_budget_stop_stops_peer(tmp_path,monkeypatch):
+    import signal
+    events=[]
+    class Child:
+        pid=99999999
+        def __init__(self,code):self.code=code
+        def poll(self):return self.code
+        def send_signal(self,sig):events.append(sig)
+        def wait(self,timeout):self.code=0;return 0
+    children=iter([Child(0),Child(None)])
+    monkeypatch.setattr(scaling,'ROOT',tmp_path)
+    monkeypatch.setattr(scaling,'available_memory',lambda:20*1024**3)
+    monkeypatch.setattr(scaling.shutil,'disk_usage',lambda path:__import__('types').SimpleNamespace(free=20*1024**3))
+    monkeypatch.setattr(scaling.subprocess,'Popen',lambda *a,**kw:next(children))
+    monkeypatch.setattr(scaling,'load_checkpoint',lambda p:{'stop_reason':'iteration node budget exceeded','iterations':2606})
+    jobs=[{'output':tmp_path/f'{i}.json','log':tmp_path/f'{i}.log','metrics':tmp_path/f'{i}-metrics','args':[]} for i in range(2)]
+    with pytest.raises(RuntimeError,match='2606: iteration node budget exceeded'):
+        scaling.run_pair(jobs,__import__('time').time()+60)
+    assert events==[signal.SIGTERM]
+    assert not (tmp_path/'batches.jsonl').exists()

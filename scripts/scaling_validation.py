@@ -46,7 +46,7 @@ def run_pair(jobs,deadline):
     if available_memory()<len(jobs)*worker_limit+2*1024**3:raise RuntimeError('insufficient host memory for two bounded workers')
     if len({str(j['output'].resolve()) for j in jobs})!=len(jobs):raise ValueError('duplicate outputs')
     if len(os.sched_getaffinity(0))<2:raise RuntimeError("two available CPU cores required")
-    started=time.monotonic();children=[]
+    started=time.monotonic();children=[];checked=set()
     def cleanup():
         for child in children:
             if child.poll() is None:child.send_signal(signal.SIGTERM)
@@ -81,6 +81,15 @@ def run_pair(jobs,deadline):
                 if row['disk_free_bytes']<10*1024**3:raise RuntimeError('disk reserve below10GiB')
                 codes=[c.poll() for c in children]
                 if any(code not in (None,0) for code in codes):raise RuntimeError(f'{modules[0]} worker failed: {codes}; inspect logs')
+                if modules[0]=='poker.train_cfr':
+                    for index,code in enumerate(codes):
+                        if code==0 and index not in checked:
+                            saved=load_checkpoint(jobs[index]['output'])
+                            reason=saved['stop_reason'];iterations=saved['iterations']
+                            del saved
+                            if reason!='target_reached':
+                                raise RuntimeError(f'training worker {index} stopped at {iterations}: {reason}; inspect checkpoint before resume')
+                            checked.add(index)
                 if all(code==0 for code in codes):
                     with (ROOT/'batches.jsonl').open('a') as handle:handle.write(json.dumps({'workers':len(jobs),'module':modules[0],'wall_seconds':time.monotonic()-started,'metrics':[str(j['metrics']) for j in jobs]})+'\n')
                     break

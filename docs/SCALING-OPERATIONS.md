@@ -16,6 +16,12 @@ an attempt-specific filename before retry. A failed child stops its peer; inspec
 both logs and lifetime metrics before any resume. Memory, node or table failures
 require investigation rather than unchanged retries.
 
+Trainer process exit zero alone does not mean its target was reached: resource
+stops also save a checkpoint and return zero. The pair supervisor now checks each
+exited trainer's checkpoint stop reason immediately, stops its peer on an early
+resource stop, and excludes that pair from successful throughput batches. Wrapper
+metrics describe process completion; the checkpoint describes training completion.
+
 The original active supervisor loaded sequential confirmation code at launch.
 Leave healthy training running. After both 4,200 checkpoints and all screening
 reports are complete, a monitor may reload the supervisor to use parallel
