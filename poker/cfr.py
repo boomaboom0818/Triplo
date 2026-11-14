@@ -102,9 +102,7 @@ class MCCFR:
         self.node_limit=None if max_nodes is None else self.nodes+max_nodes
         self.deadline=deadline; self.pending_sums={};self.pending_diagnostics=Counter();self.pending_weight_moments={};delta={}
         try:
-            for player in range(players):
-                self.regret(factory(self.rng.randrange(2**63)),player,delta)
-                self.average(factory(self.rng.randrange(2**63)),player)
+            self.traverse(factory,players,delta)
         except BaseException:
             self.rng.setstate(rng_state);self.nodes=old_nodes
             raise
@@ -124,6 +122,11 @@ class MCCFR:
             del self.pending_diagnostics
             del self.pending_weight_moments
             self.node_limit=None;self.deadline=None
+
+    def traverse(self,factory,players,delta):
+        for player in range(players):
+            self.regret(factory(self.rng.randrange(2**63)),player,delta)
+            self.average(factory(self.rng.randrange(2**63)),player)
 
 
 class Kuhn:

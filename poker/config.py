@@ -3,6 +3,8 @@ import json
 import math
 from pathlib import Path
 
+CFR_ALGORITHMS=('external-sampling-mccfr-v1','outcome-sampling-mccfr-v2')
+
 
 def load_config(path):
     config = json.loads(Path(path).read_text())
@@ -20,12 +22,20 @@ def load_checkpoint(path, *, model_id=None):
     checkpoint = json.loads(Path(path).read_text())
     if model_id is not None and checkpoint.get('model_id') != model_id:
         raise ValueError('checkpoint model identity mismatch; legacy artifacts are unassigned')
-    if checkpoint.get('algorithm') == 'external-sampling-mccfr-v1':
+    if checkpoint.get('algorithm') in CFR_ALGORITHMS:
         if (checkpoint.get('schema') != 1 or checkpoint.get('engine') != 'pokerkit-0.7.7'
                 or checkpoint.get('abstraction') not in ('exact-observation-v1','texture-buckets-v1','texture-buckets-v2')
                 or checkpoint.get('config', {}).get('game') != 'holdem'
                 or checkpoint.get('config', {}).get('players') != 6):
             raise ValueError('evaluation requires a six-player holdem CFR checkpoint')
+        cfg=checkpoint['config']
+        if checkpoint['algorithm']=='outcome-sampling-mccfr-v2':
+            samples=cfg.get('trajectory_samples')
+            if (cfg.get('traversal')!='trajectory-v2' or cfg.get('averaging_sampler')!='trajectory-call-mixture-v2'
+                    or type(samples) is not int or not 1<=samples<=64):
+                raise ValueError('invalid trajectory checkpoint metadata')
+        elif cfg.get('traversal','external-v1')!='external-v1' or cfg.get('averaging_sampler')=='trajectory-call-mixture-v2':
+            raise ValueError('CFR algorithm/traversal mismatch')
         for name in ('regrets','sums'):
             rows=checkpoint.get(name)
             if not isinstance(rows,dict): raise ValueError('invalid CFR table')

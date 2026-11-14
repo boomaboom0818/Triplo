@@ -4,7 +4,7 @@ from random import Random
 from .game import play
 from .policy import Policy
 from .cfr import CFRPolicy,information_key
-from .config import load_checkpoint, load_config
+from .config import load_checkpoint, load_config, CFR_ALGORITHMS
 
 class LiveFallbackPolicy:
     """Match the adapter's check/fold/call fallback for local comparison only."""
@@ -43,7 +43,7 @@ def evaluate(path,blocks,seed,copies,config_path="configs/bot.json",opponent_che
         digest=hashlib.sha256(Path(opponent_path).read_bytes()).hexdigest()
         if digest==candidate_hash:raise ValueError('held-out opponent is the candidate checkpoint')
         opponent=load_checkpoint(opponent_path,model_id='bot-opponent-v1')
-        if opponent['algorithm']!='external-sampling-mccfr-v1':raise ValueError('opponent must be CFR checkpoint')
+        if opponent['algorithm'] not in CFR_ALGORITHMS:raise ValueError('opponent must be CFR checkpoint')
         if opponent['sums']==checkpoint.get('sums') or opponent['sums'] in checkpoint.get('archive',[]):
             raise ValueError('held-out opponent overlaps candidate training population')
         opponents['checkpoint:'+digest]=opponent
@@ -61,7 +61,7 @@ def evaluate(path,blocks,seed,copies,config_path="configs/bot.json",opponent_che
                 candidates={(rotation+i)%6 for i in range(copies)}
                 policies=[Policy(seed+block*100+rotation*6+i,table if i in candidates else {},
                                  'blueprint' if i in candidates else (['calling','tight','aggressive'][i%3] if population=='mixed' else population), mode=config['mode']) for i in range(6)]
-                if checkpoint['algorithm']=='external-sampling-mccfr-v1':
+                if checkpoint['algorithm'] in CFR_ALGORITHMS:
                     for i in candidates:
                         policies[i]=CFRPolicy(checkpoint['sums'],seed+block*100+rotation*6+i,checkpoint['abstraction'])
                         if live_fallback:policies[i]=LiveFallbackPolicy(policies[i])
@@ -72,7 +72,7 @@ def evaluate(path,blocks,seed,copies,config_path="configs/bot.json",opponent_che
                             policies[i]=CFRPolicy(opponent['sums'],seed+block*100+rotation*6+i,opponent['abstraction'])
                 payoff,traces,times=play(policies,seed+block,button=0)
                 results.extend(payoff[i] for i in candidates); latency.extend(times)
-                if checkpoint['algorithm']=='external-sampling-mccfr-v1':
+                if checkpoint['algorithm'] in CFR_ALGORITHMS:
                     for i in candidates:
                         for observation,action in traces[i]:
                             decisions+=1

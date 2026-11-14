@@ -99,7 +99,7 @@ def run_pair(jobs,deadline):
         for sig,handler in old.items():signal.signal(sig,handler)
 
 
-def evaluate_parallel(requests,deadline):
+def evaluate_parallel(requests,deadline,*,seed=8200000,blocks=2000):
     """Up to two fixed-seed evaluations, held output locks through atomic publication."""
     with ExitStack() as stack:
         jobs=[]
@@ -107,13 +107,13 @@ def evaluate_parallel(requests,deadline):
             output=request['output'];checkpoint=request['checkpoint'];opponent=request['opponent']
             stack.enter_context(run_lock(output))
             if output.exists():
-                validate_evaluation(json.loads(output.read_text()),checkpoint,opponent,8200000,request['uniform'],2000)
+                validate_evaluation(json.loads(output.read_text()),checkpoint,opponent,seed,request['uniform'],blocks)
                 continue
             pending=Path(str(output)+'.pending')
             if pending.exists():
                 # Preserve diagnostics from an interrupted attempt before a deliberate resume.
                 pending.replace(Path(str(pending)+f'.attempt-{time.time_ns()}'))
-            args=['--checkpoint',str(checkpoint),'--blocks','2000','--seed','8200000','--copies','1','--opponent-checkpoints',str(opponent)]
+            args=['--checkpoint',str(checkpoint),'--blocks',str(blocks),'--seed',str(seed),'--copies','1','--opponent-checkpoints',str(opponent)]
             if request['uniform']:args+=['--uniform-control']
             jobs.append({'module':'poker.evaluate','output':output,'log':pending,'metrics':Path(str(output)+'.metrics.json'),'args':args})
         run_pair(jobs,deadline)
@@ -121,7 +121,7 @@ def evaluate_parallel(requests,deadline):
             output=request['output']
             if output.exists():continue
             pending=Path(str(output)+'.pending')
-            validate_evaluation(json.loads(pending.read_text()),request['checkpoint'],request['opponent'],8200000,request['uniform'],2000)
+            validate_evaluation(json.loads(pending.read_text()),request['checkpoint'],request['opponent'],seed,request['uniform'],blocks)
             pending.replace(output)
 
 
