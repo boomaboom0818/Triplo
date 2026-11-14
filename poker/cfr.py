@@ -8,7 +8,8 @@ incorrect multiplayer 'simple averaging' shortcut.
 import copy
 import time
 from random import Random
-from .abstraction import bucket_key,VERSION
+from .abstraction import bucket_key,bucket_key_v2,VERSION,VERSION_V2
+from collections import Counter
 
 
 def normalize(weights):
@@ -24,7 +25,7 @@ class TraversalLimit(RuntimeError):
 class MCCFR:
     def __init__(self,seed=1):
         self.rng=Random(seed);self.regrets={};self.sums={};self.iterations=0
-        self.nodes=0
+        self.nodes=0;self.diagnostics=Counter()
 
     def visit(self):
         if getattr(self,"stop_requested",lambda:False)():raise KeyboardInterrupt
@@ -34,6 +35,13 @@ class MCCFR:
         if getattr(self,"deadline",None) is not None and time.monotonic()>self.deadline:
             raise TraversalLimit("run time budget reached")
 
+    def record_visit(self,state,traversal,owner):
+        if not hasattr(state,'game'):return
+        o=state.game.observe()
+        kind='enumerated' if o.player==owner else 'sampled'
+        key=f'{traversal}:street={o.street}:active={sum(o.active)}:{kind}'
+        getattr(self,'pending_diagnostics',self.diagnostics)[key]+=1
+
     def strategy(self,key,actions):
         row=self.regrets.get(key,[0.0]*len(actions))
         if len(row)!=len(actions):raise ValueError('information-set action mismatch')
@@ -42,6 +50,7 @@ class MCCFR:
     def regret(self,state,updater,delta):
         self.visit()
         if state.terminal():return state.returns()[updater]
+        self.record_visit(state,'regret',updater)
         actor,key,actions=state.info()
         strategy=self.strategy(key,actions)
         if actor!=updater:
@@ -57,6 +66,7 @@ class MCCFR:
     def average(self,state,owner,own_reach=1.0,inverse_sample=1.0):
         self.visit()
         if state.terminal():return
+        self.record_visit(state,'average',owner)
         actor,key,actions=state.info();strategy=self.strategy(key,actions)
         if actor==owner:
             row=getattr(self,'pending_sums',self.sums).setdefault(key,[0.0]*len(actions))
@@ -71,7 +81,7 @@ class MCCFR:
         self.opponents=opponents or {}
         rng_state=self.rng.getstate(); old_nodes=self.nodes
         self.node_limit=None if max_nodes is None else self.nodes+max_nodes
-        self.deadline=deadline; self.pending_sums={};delta={}
+        self.deadline=deadline; self.pending_sums={};self.pending_diagnostics=Counter();delta={}
         try:
             for player in range(players):
                 self.regret(factory(self.rng.randrange(2**63)),player,delta)
@@ -84,9 +94,11 @@ class MCCFR:
                 for key,values in updates.items():
                     row=destination.setdefault(key,[0.0]*len(values))
                     for i,v in enumerate(values):row[i]+=v
+            self.diagnostics.update(self.pending_diagnostics)
             self.iterations+=1
         finally:
             del self.pending_sums
+            del self.pending_diagnostics
             self.node_limit=None;self.deadline=None
 
 
@@ -132,6 +144,7 @@ def holdem_key(o):
 def information_key(o,abstraction):
     if abstraction=='exact-observation-v1':return holdem_key(o)
     if abstraction==VERSION:return bucket_key(o)
+    if abstraction==VERSION_V2:return bucket_key_v2(o)
     raise ValueError('unsupported abstraction')
 
 

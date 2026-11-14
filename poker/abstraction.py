@@ -36,3 +36,23 @@ def bucket_key(o):
     return json.dumps((VERSION,o.position,o.street,cards_bucket(tuple(sorted(o.hole)),o.board),
         o.active,min(8,o.call*8//max(1,o.pot)),
         tuple(min(8,stack*2//max(1,o.pot)) for stack in o.stacks),legal,raises),separators=(',',':'))
+
+
+VERSION_V2='texture-buckets-v2'
+
+def bucket_key_v2(o):
+    """Experimental compact state; ordered raise slots retain their pot ratios.
+
+    Own position and relative active counts replace exact opponent seat masks.
+    Effective stack buckets replace the six-seat stack vector. This loses detail
+    deliberately and requires independent training; v1 tables remain unchanged.
+    """
+    cards=cards_bucket(tuple(sorted(o.hole)),o.board)
+    if o.street:
+        cards=(cards[0],cards[1],min(4,cards[4]),min(4,cards[5]),cards[6],cards[7])
+    legal=tuple(a if isinstance(a,str) else min(20,round(a/max(2,o.pot)*4)) for a in o.legal)
+    active=[s for i,s in enumerate(o.stacks) if o.active[i] and i!=o.position]
+    effective=min(o.stacks[o.position],max(active,default=0))
+    spr=min(4,effective//max(1,o.pot))
+    return json.dumps((VERSION_V2,o.position,o.street,cards,sum(o.active),
+        sum(o.active[:o.position]),min(4,o.call*4//max(1,o.pot)),spr,legal),separators=(',',':'))

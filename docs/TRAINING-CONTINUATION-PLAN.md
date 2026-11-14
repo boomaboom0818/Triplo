@@ -135,3 +135,29 @@ Do not schedule sustained training until the diagnostic instrumentation and
 new experiment manifest are reviewable. Keep all original checkpoints and
 memory protections. The monitor schedule still requires its actual task ID to
 be disabled or repurposed; none was supplied in the monitoring run.
+
+## Implemented bounded experiment
+
+`scripts/continuation_control.py` runs the controls and independent v2 pilots
+sequentially under 3 GiB per-child address-space limits. It refuses an existing
+experiment manifest and uses a supervisor lock. It stops on a failed child or
+incomplete training target; it does not retry failures. Outputs are isolated in
+`runs/bot/continuation-001` and parent checkpoint hashes are recorded.
+
+Diagnostics count nonterminal traversal visits by street, active-player count,
+and whether the owner enumerates actions or an opponent action is sampled.
+Only completed iterations contribute. Legacy resumes explicitly record the
+iteration at which diagnostic collection starts; earlier visits are unknown.
+
+The experimental v2 groups active seats by count and number before the acting
+seat, replaces the stack vector with an effective stack/pot bucket, and coarsens
+postflop card features. Own position and ordered legal-menu ratios remain.
+It is intentionally lossy; coverage improvement cannot establish quality.
+Training and loading explicitly recognize v2, and v1/v2 resumes are rejected.
+
+Each stage and the original 5,000-iteration baseline receive one/three-copy
+1,000-block evaluations on seed 5,100,000. Final status is
+`completed_pending_evidence_review`; no sustained campaign is launched.
+Promotion requires the coverage and payoff review above. The current aggregate
+reports do not provide paired per-deal differences, so close/inconclusive results
+must trigger further evaluation instrumentation rather than automatic promotion.

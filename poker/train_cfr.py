@@ -10,7 +10,7 @@ import fcntl
 import shutil
 import copy
 import hashlib
-from .abstraction import VERSION
+from .abstraction import VERSION,VERSION_V2
 from contextlib import contextmanager
 from pathlib import Path
 from .cfr import MCCFR,Kuhn,Holdem,TraversalLimit
@@ -41,7 +41,7 @@ def train(iterations,path,seed=1,game='kuhn',players=6,resume=None,*,
 def _train(iterations,path,seed,game,players,resume,checkpoint_every,
            max_iteration_nodes,max_seconds,max_information_sets,abstraction,
            population_probability,archive_every,archive_size):
-    if abstraction not in ("exact-observation-v1",VERSION):raise ValueError("unsupported abstraction")
+    if abstraction not in ("exact-observation-v1",VERSION,VERSION_V2):raise ValueError("unsupported abstraction")
     if not 0<=population_probability<=1:raise ValueError("invalid population probability")
     for value in (checkpoint_every,max_iteration_nodes,max_information_sets,archive_every,archive_size):
         if type(value) is not int or value<1:raise ValueError('limits must be positive integers')
@@ -63,6 +63,7 @@ def _train(iterations,path,seed,game,players,resume,checkpoint_every,
         solver.regrets=saved['regrets'];solver.sums=saved['sums'];archive=saved['archive']
         solver.rng.setstate(tuples(saved['rng']));solver.iterations=saved['iterations']
         solver.nodes=saved['nodes'];seconds=saved['seconds']
+        solver.diagnostics.update(saved.get('diagnostics',{}))
     if iterations<=solver.iterations:raise ValueError('target must exceed completed iterations')
     try:revision=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
     except (OSError,subprocess.CalledProcessError):revision='unknown'
@@ -74,7 +75,8 @@ def _train(iterations,path,seed,game,players,resume,checkpoint_every,
         result=dict(schema=1,algorithm='external-sampling-mccfr-v1',model_id='bot-opponent-v1',
                     config=config,engine='pokerkit-0.7.7',abstraction=abstraction,archive=archive,
                     iterations=solver.iterations,regrets=solver.regrets,sums=solver.sums,
-                    rng=solver.rng.getstate(),nodes=solver.nodes,seconds=seconds+time.perf_counter()-start,
+                    rng=solver.rng.getstate(),nodes=solver.nodes,diagnostics=dict(solver.diagnostics),
+                    diagnostics_started_at=saved.get('diagnostics_started_at',saved['iterations']) if resume else 0,seconds=seconds+time.perf_counter()-start,
                     stop_reason=stop_reason,provenance=dict(revision=revision,python=platform.python_version(),source_sha256=source_hashes),
                     limits=dict(max_iteration_nodes=max_iteration_nodes,max_seconds=max_seconds,
                                 max_information_sets=max_information_sets,checkpoint_every=checkpoint_every))
@@ -129,7 +131,7 @@ if __name__=='__main__':
     p.add_argument('--max-iteration-nodes',type=int,default=100000)
     p.add_argument('--max-seconds',type=float,default=3600)
     p.add_argument('--max-information-sets',type=int,default=500000)
-    p.add_argument('--abstraction',choices=['exact-observation-v1',VERSION],default='exact-observation-v1')
+    p.add_argument('--abstraction',choices=['exact-observation-v1',VERSION,VERSION_V2],default='exact-observation-v1')
     p.add_argument('--population-probability',type=float,default=0.0)
     p.add_argument('--archive-every',type=int,default=100)
     p.add_argument('--archive-size',type=int,default=4)

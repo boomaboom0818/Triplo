@@ -22,7 +22,7 @@ def load_checkpoint(path, *, model_id=None):
         raise ValueError('checkpoint model identity mismatch; legacy artifacts are unassigned')
     if checkpoint.get('algorithm') == 'external-sampling-mccfr-v1':
         if (checkpoint.get('schema') != 1 or checkpoint.get('engine') != 'pokerkit-0.7.7'
-                or checkpoint.get('abstraction') not in ('exact-observation-v1','texture-buckets-v1')
+                or checkpoint.get('abstraction') not in ('exact-observation-v1','texture-buckets-v1','texture-buckets-v2')
                 or checkpoint.get('config', {}).get('game') != 'holdem'
                 or checkpoint.get('config', {}).get('players') != 6):
             raise ValueError('evaluation requires a six-player holdem CFR checkpoint')
