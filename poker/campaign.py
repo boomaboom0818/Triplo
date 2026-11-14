@@ -16,10 +16,11 @@ def child_limits():
     os.nice(10)
 
 
-def campaign(output,targets,blocks=200,resume=False):
+def campaign(output,targets,blocks=200,resume=False,max_information_sets=250000):
     root=Path(output).resolve()
     if root.exists() and not resume:raise ValueError('campaign directory already exists; use --resume')
     if resume and not (root/'manifest.json').exists():raise ValueError('campaign manifest missing')
+    if type(max_information_sets) is not int or max_information_sets<1:raise ValueError('invalid table budget')
     if blocks<2:raise ValueError('at least two evaluation blocks required')
     if not targets or targets!=sorted(set(targets)) or targets[0]<1:
         raise ValueError('targets must be positive, unique and increasing')
@@ -34,12 +35,12 @@ def campaign(output,targets,blocks=200,resume=False):
     for name,seed,population in [('candidate-a',11,.25),('candidate-b',29,.25),('validation',900001,0.0)]:
         cfg=json.loads(Path('configs/cfr-bot.json').read_text())
         cfg.update(seed=seed,population_probability=population,archive_size=2,
-                   max_information_sets=250000,checkpoint_every=50,max_seconds=86400,
+                   max_information_sets=max_information_sets,checkpoint_every=50,max_seconds=86400,
                    max_iteration_nodes=500000)
         configs[name]=cfg
     if resume:
         saved=json.loads((root/'manifest.json').read_text())
-        if saved['targets']!=targets or saved['blocks']!=blocks or saved['configs']!=configs:
+        if saved['targets']!=targets or saved['blocks']!=blocks or {k:{f:v for f,v in c.items() if f!='max_information_sets'} for k,c in saved['configs'].items()}!={k:{f:v for f,v in c.items() if f!='max_information_sets'} for k,c in configs.items()}:
             raise ValueError('campaign resume configuration mismatch')
     atomic_save(root/'manifest.json',dict(pid=os.getpid(),targets=targets,blocks=blocks,configs=configs,
         memory_limit_per_worker_bytes=3*1024**3,validation_frozen_at=targets[0],
@@ -102,4 +103,5 @@ if __name__=='__main__':
     p.add_argument('--targets',type=int,nargs='+',default=[250,1000,5000])
     p.add_argument('--blocks',type=int,default=200)
     p.add_argument('--resume',action='store_true')
-    a=p.parse_args();campaign(a.output,a.targets,a.blocks,a.resume)
+    p.add_argument('--max-information-sets',type=int,default=250000)
+    a=p.parse_args();campaign(a.output,a.targets,a.blocks,a.resume,a.max_information_sets)

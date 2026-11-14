@@ -124,3 +124,8 @@ The output directory contains the manifest, exact run configs, named stage
 checkpoints, per-candidate logs, evaluation reports and `status.json`. Send SIGTERM
 to the PID recorded in its manifest for graceful checkpointing and shutdown.
 A killed host or process cannot guarantee the final incomplete interval is saved.
+
+The table budget may be adjusted when resuming a campaign without changing its
+learning configuration, for example `--resume --max-information-sets 1250000`.
+The 3-GiB per-worker address-space limit still applies; raising a table cap does
+not guarantee that later stages fit memory. Previous checkpoints remain available.
