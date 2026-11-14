@@ -45,3 +45,15 @@ def test_rejects_incomplete_fold_state():
     del s['seats'][0]['folded']
     with pytest.raises(ValueError):
         decision(s, CFRPolicy({}, abstraction='texture-buckets-v2'))
+
+
+def test_active_game_sets_user_agent_and_bearer(monkeypatch):
+    import io
+    import scripts.openpoker_client as client
+    def respond(request, timeout):
+        assert request.get_header('Authorization') == 'Bearer test-placeholder'
+        assert request.get_header('User-agent') == 'TriploPoker/0.1'
+        assert timeout == 15
+        return io.BytesIO(b'{"playing": false}')
+    monkeypatch.setattr(client, 'urlopen', respond)
+    assert client.active_game('test-placeholder') == {'playing': False}
