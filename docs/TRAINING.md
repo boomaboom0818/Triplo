@@ -100,3 +100,27 @@ hit. It does not silently promote an incomplete stage or overwrite an experiment
 Resource budgets apply to each stage invocation. To recover a budget-stopped
 checkpoint use `train_cfr --resume` and evaluate it explicitly. For another training
 seed, copy the config and change `seed`; keep the final test set untouched.
+
+## Local sustained campaign
+
+```sh
+.venv/bin/python -m poker.campaign --output runs/bot/campaign-001
+```
+
+Runs two independently seeded candidate learners and a separate validation learner
+in parallel for the first 250-iteration stage. Validation is then frozen; candidates
+continue to 1,000 and 5,000 total iterations. Each stage evaluates one and three
+candidate copies over 200 duplicate-deal blocks per population. These are screening
+results; final testing needs separate deals and independently established opponents.
+
+Every child runs with a 3-GiB address-space limit and lower CPU priority. The trainer
+also has a soft 250,000-information-set limit, two retained historical policies,
+50-iteration checkpoint intervals, and a 24-hour invocation budget. Resource stops
+halt the campaign explicitly; inspect status/logs and adjust based on measured use.
+A resource-stopped checkpoint remains resumable with its recorded configuration.
+A campaign reaching its final target stops; this is not an indefinite service.
+
+The output directory contains the manifest, exact run configs, named stage
+checkpoints, per-candidate logs, evaluation reports and `status.json`. Send SIGTERM
+to the PID recorded in its manifest for graceful checkpointing and shutdown.
+A killed host or process cannot guarantee the final incomplete interval is saved.
