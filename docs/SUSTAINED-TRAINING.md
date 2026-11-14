@@ -56,3 +56,9 @@ street/active players, paired payoffs, tight-script regressions, variance and
 memory/table growth before scheduling another extension. Development-set gains
 must not be presented as final-test or competitive-strength evidence. The final
 seed range 6,100,000 remains untouched.
+
+The runner accepts `--purpose exploratory` (default) or `--purpose evidence-qualified`
+and records it in the immutable manifest. This label records the evidence review;
+it does not run or bypass a statistical gate. Recovery must use the same label.
+The 1,250/1,500 extension after confirmation-001 is explicitly exploratory because
+the two-seed parent-improvement gate did not pass; see CONFIRMATION-001-RESULTS.md.

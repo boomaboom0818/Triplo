@@ -72,7 +72,7 @@ def main(args):
     deadline=datetime.fromisoformat(args.deadline)
     if deadline.tzinfo is None:raise ValueError('deadline must have timezone')
     if args.stages!=sorted(set(args.stages)) or not args.stages:raise ValueError('positive increasing stages required')
-    manifest=dict(parents={f'candidate-{i}':{'path':str(p.resolve()),'sha256':digest(p)} for i,p in enumerate(args.parents)},stages=args.stages,validation={'path':str(args.validation.resolve()),'sha256':digest(args.validation)},seed=args.seed,blocks=1000,memory_limit_bytes=3*1024**3)
+    manifest=dict(parents={f'candidate-{i}':{'path':str(p.resolve()),'sha256':digest(p)} for i,p in enumerate(args.parents)},stages=args.stages,validation={'path':str(args.validation.resolve()),'sha256':digest(args.validation)},seed=args.seed,blocks=1000,memory_limit_bytes=3*1024**3,purpose=args.purpose)
     with run_lock(root/'supervisor'):
         path=root/'manifest.json'
         if len({v['path'] for v in manifest['parents'].values()})!=len(manifest['parents']):raise ValueError('duplicate parent checkpoints')
@@ -124,4 +124,5 @@ if __name__=='__main__':
     p.add_argument('--stages',nargs='+',type=int,required=True)
     p.add_argument('--validation',type=Path,required=True);p.add_argument('--seed',type=int,required=True)
     p.add_argument('--deadline',required=True);p.add_argument('--resume',action='store_true')
+    p.add_argument('--purpose',choices=['exploratory','evidence-qualified'],default='exploratory')
     main(p.parse_args())
