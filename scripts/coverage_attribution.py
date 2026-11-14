@@ -16,7 +16,7 @@ from scripts.scaling_validation import available_memory
 class TracedPolicy(CFRPolicy):
     def __init__(self,*args,groups,missing,regrets,**kwargs):
         super().__init__(*args,**kwargs);self.groups=groups;self.missing=missing;self.markers=set()
-        self.regrets=regrets;self.current_own_reach=1.
+        self.regrets=regrets;self.current_own_reach=1.;self.current_zero_support=False
     def act(self,o):
         key=information_key(o,self.abstraction);row=self.sums.get(key)
         source='positive' if row and any(row) else 'missing' if row is None else 'zero'
@@ -25,8 +25,8 @@ class TracedPolicy(CFRPolicy):
         counts=self.groups.setdefault(group,dict(decisions=0,call=0,fold=0,raise_count=0,overbet_raise=0,big_paid_call=0,current_unreachable=0,current_tiny_reach=0,regret_row=0,positive_regret_row=0))
         counts['decisions']+=1;counts['raise_count' if category=='raise' else category]+=1
         regrets=self.regrets.get(key)
-        counts['current_unreachable']+=self.current_own_reach==0
-        counts['current_tiny_reach']+=0<self.current_own_reach<1e-6
+        counts['current_unreachable']+=self.current_zero_support
+        counts['current_tiny_reach']+=not self.current_zero_support and self.current_own_reach<1e-6
         counts['regret_row']+=regrets is not None
         counts['positive_regret_row']+=bool(regrets and any(x>0 for x in regrets))
         counts['overbet_raise']+=isinstance(action,int) and action>o.pot
@@ -37,7 +37,9 @@ class TracedPolicy(CFRPolicy):
             self.missing[hashlib.sha256(key.encode()).hexdigest()]+=1
         if big_call:self.markers.add('large_call_seen')
         current=normalize(regrets if regrets is not None else [0.]*len(o.legal))
-        self.current_own_reach*=current[o.legal.index(action)]
+        probability=current[o.legal.index(action)]
+        self.current_zero_support=self.current_zero_support or probability==0
+        self.current_own_reach*=probability
         return action
 
 

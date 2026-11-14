@@ -32,3 +32,6 @@ def test_replay_identifies_average_actions_outside_current_strategy_support():
     p.sums={};p.act(o)
     missing=next(v for k,v in groups.items() if 'source=missing' in k)
     assert missing['current_unreachable']==1 and missing['positive_regret_row']==1
+    # A floating-point underflow is not a zero-probability action.
+    p.current_own_reach=0.;p.current_zero_support=False;p.act(o)
+    assert missing['current_unreachable']==1 and missing['current_tiny_reach']==1
