@@ -69,7 +69,7 @@ def _train(iterations,path,seed,game,players,resume,checkpoint_every,
         if type(regret_prefix_depth) is not int or regret_prefix_depth not in (1,2):raise ValueError('invalid regret prefix depth')
         config['regret_prefix_depth']=regret_prefix_depth
     if averaging_sampler!="uniform":config["averaging_sampler"]=averaging_sampler
-    if opponent_population not in ('historical-v1','diverse-v1'):raise ValueError('unsupported opponent population')
+    if opponent_population not in ('historical-v1','diverse-v1','guarded-tables-v2'):raise ValueError('unsupported opponent population')
     if opponent_population!='historical-v1':
         if game!='holdem':raise ValueError('diverse profiles require holdem')
         config['opponent_population']=opponent_population
@@ -87,7 +87,7 @@ def _train(iterations,path,seed,game,players,resume,checkpoint_every,
         compatible=saved.get('config')==config
         if fork_population:
             compatible=population_fork_allowed(saved.get('config',{}),config)
-            if compatible:recipe_fork=dict(parent_sha256=hashlib.sha256(Path(resume).read_bytes()).hexdigest(),parent_config=saved['config'],iterations=saved['iterations'],kind='explicit population-diversity fork')
+            if compatible:recipe_fork=dict(parent_sha256=hashlib.sha256(Path(resume).read_bytes()).hexdigest(),parent_algorithm=saved['algorithm'],parent_config=saved['config'],iterations=saved['iterations'],kind='explicit population fork',previous_recipe_fork=saved.get('recipe_fork'))
         elif fork_traversal:
             compatible=(traversal=='trajectory-v2' and saved.get('algorithm')=='external-sampling-mccfr-v1' and fork_allowed(saved.get('config',{}),config)) or (traversal=='prefix-v3' and saved.get('algorithm')==TRAJECTORY_ALGORITHM and prefix_fork_allowed(saved.get('config',{}),config))
             if compatible:recipe_fork=dict(parent_sha256=hashlib.sha256(Path(resume).read_bytes()).hexdigest(),parent_algorithm=saved['algorithm'],parent_config=saved['config'],iterations=saved['iterations'],kind=f'explicit {traversal} fork',previous_recipe_fork=saved.get('recipe_fork'))
@@ -101,8 +101,8 @@ def _train(iterations,path,seed,game,players,resume,checkpoint_every,
         solver.nodes=saved['nodes'];seconds=saved['seconds']
         solver.diagnostics.update(saved.get('diagnostics',{}))
         solver.average_weight_moments=saved.get('average_weight_moments',{})
-        if traversal!='external-v1' and not fork_traversal and 'traversal_stats' in saved:solver.traversal_stats=saved['traversal_stats']
-        if traversal=='prefix-v3' and not fork_traversal:solver.epoch_weight_moments=saved.get('epoch_weight_moments',{})
+        if traversal!='external-v1' and not (fork_traversal or fork_population) and 'traversal_stats' in saved:solver.traversal_stats=saved['traversal_stats']
+        if traversal=='prefix-v3' and not (fork_traversal or fork_population):solver.epoch_weight_moments=saved.get('epoch_weight_moments',{})
     if iterations<=solver.iterations:raise ValueError('target must exceed completed iterations')
     try:revision=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
     except (OSError,subprocess.CalledProcessError):revision='unknown'
@@ -122,7 +122,7 @@ def _train(iterations,path,seed,game,players,resume,checkpoint_every,
                     limits=dict(max_iteration_nodes=max_iteration_nodes,max_seconds=max_seconds,
                                 max_information_sets=max_information_sets,checkpoint_every=checkpoint_every))
         if traversal!='external-v1':
-            result.update(traversal_stats=solver.traversal_stats,traversal_stats_started_at=(saved['iterations'] if fork_traversal else saved.get('traversal_stats_started_at',saved['iterations'])) if resume else 0)
+            result.update(traversal_stats=solver.traversal_stats,traversal_stats_started_at=(saved['iterations'] if fork_traversal or fork_population else saved.get('traversal_stats_started_at',saved['iterations'])) if resume else 0)
             result.update(sampling_diagnostics_schema='actual-actions-v2',sampling_diagnostics_started_at=saved.get('sampling_diagnostics_started_at',saved['iterations']) if resume else 0)
         if traversal=='prefix-v3':result['epoch_weight_moments']=solver.epoch_weight_moments
         # Keep the last complete checkpoint as recovery if replacement/disk write fails.
@@ -151,9 +151,14 @@ def _train(iterations,path,seed,game,players,resume,checkpoint_every,
             if opponent_population=='diverse-v1':
                 for player in range(config['players']):
                     if solver.rng.random()<.25:opponents[player]=solver.rng.choice(('passive-v1','pressure-v1'))
+            guarded_table=opponent_population=='guarded-tables-v2' and solver.rng.random()<.25
+            if guarded_table:opponents={player:'guarded-v2' for player in range(config['players'])}
             try:solver.step(factory,config['players'],max_iteration_nodes,deadline,opponents)
             except BaseException:
                 solver.rng.setstate(rng_before);raise
+            if opponent_population=='guarded-tables-v2':
+                mode='guarded' if guarded_table else 'historical'
+                solver.diagnostics[f'population:guarded-tables-v2:{mode}_iterations']+=1
             if solver.iterations%archive_every==0:
                 archive.append(copy.deepcopy(solver.sums));archive=archive[-archive_size:]
             if solver.iterations%checkpoint_every==0 and solver.iterations<iterations:save()
@@ -184,7 +189,7 @@ if __name__=='__main__':
     p.add_argument('--archive-every',type=int,default=100)
     p.add_argument('--archive-size',type=int,default=4)
     p.add_argument('--averaging-sampler',choices=['uniform','call-mixture-v1',TRAJECTORY_AVERAGING],default='uniform')
-    p.add_argument('--opponent-population',choices=['historical-v1','diverse-v1'],default='historical-v1')
+    p.add_argument('--opponent-population',choices=['historical-v1','diverse-v1','guarded-tables-v2'],default='historical-v1')
     p.add_argument('--fork-population',action='store_true')
     p.add_argument('--traversal',choices=['external-v1','trajectory-v2','prefix-v3'],default='external-v1')
     p.add_argument('--trajectory-samples',type=int,default=8)

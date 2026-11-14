@@ -23,11 +23,15 @@ EXPECTED_BASES=[2606,2850]
 SCREEN_SEED=8300000
 CONFIRM_SEED=8400000
 ADDITIONAL_SOURCES=[]
+POPULATION=None
+FORK_FLAG='--fork-traversal'
+REQUIRE_TIGHT_IMPROVEMENT=False
 
 
 def recipe(saved):
     result={**saved['config'],'traversal':TRAVERSAL,'trajectory_samples':8,'averaging_sampler':AVERAGING}
     if PREFIX_DEPTH is not None:result['regret_prefix_depth']=PREFIX_DEPTH
+    if POPULATION is not None:result['opponent_population']=POPULATION
     return result
 
 
@@ -73,13 +77,20 @@ def coverage(report):
     return result
 
 
+def tight_coverage_improvement(candidate,baseline):
+    after=candidate['tight'];before=baseline['tight'];gain=after['fraction']-before['fraction']
+    return dict(candidate=after,baseline=before,percentage_point_gain=100*gain,
+                required_min_fraction=.05,required_min_decisions=200,required_percentage_point_gain=2.,
+                passed=after['decisions']>=200 and after['fraction']>=.05 and gain>=.02-1e-12)
+
+
 def main(deadline,resume=False):
     deadline=datetime.fromisoformat(deadline)
     if deadline.tzinfo is None or not time.time()<deadline.timestamp()<=time.time()+12*3600:raise ValueError('finite invocation deadline within12h required')
     ROOT.mkdir(parents=True,exist_ok=True);workers.ROOT=ROOT
     with run_lock(ROOT/'supervisor'):
         inputs=[*PARENTS,VALIDATION,*ROBUSTNESS]
-        manifest=dict(algorithm=ALGORITHM,parents=[str(p) for p in PARENTS],additions=ADDITIONS,samples=8,
+        manifest=dict(algorithm=ALGORITHM,recipe=POPULATION,parents=[str(p) for p in PARENTS],additions=ADDITIONS,samples=8,
             deadline=deadline.isoformat(),screen_seed=SCREEN_SEED,screen_blocks=200,confirm_seed=CONFIRM_SEED,confirm_blocks=2000,
             inputs=[dict(path=str(p.resolve()),sha256=digest(p)) for p in inputs],
             criteria=str(CRITERIA),criteria_sha256=digest(CRITERIA),
@@ -114,7 +125,7 @@ def main(deadline,resume=False):
                     if not complete:
                         cp=ROOT/f'candidate-{i}-plus-{addition}-config.json';atomic_save(cp,cfg)
                         args=['--config',str(cp),'--output',str(p),'--resume',str(actual)]
-                        if actual==parent:args+=['--fork-traversal']
+                        if actual==parent:args+=[FORK_FLAG]
                         jobs.append(dict(output=p,log=ROOT/f'candidate-{i}-plus-{addition}.log',metrics=ROOT/f'candidate-{i}-plus-{addition}-metrics.json',args=args))
                 atomic_save(ROOT/'status.json',dict(status='training',added_iterations=addition,workers=len(jobs)))
                 workers.run_pair(jobs,deadline.timestamp())
@@ -152,6 +163,10 @@ def main(deadline,resume=False):
                         gain_pass=pair[key]['interval'][0]>0 and uniform[key]['ci95'][0]>0,
                         coverage_pass=all(row['decisions']>=200 and row['fraction']>=.05 for pop,row in cov.items() if pop in ('calling','mixed',key)),
                         material_regression=any(v['interval'][1]<-10 for v in pair.values()))
+                    if REQUIRE_TIGHT_IMPROVEMENT:
+                        improvement=tight_coverage_improvement(cov,coverage(b))
+                        final[str(i)][population]['tight_coverage_improvement']=improvement
+                        final[str(i)][population]['coverage_pass'] &= improvement['passed']
             atomic_save(ROOT/'learning-evidence.json',final)
             metrics=[json.loads((ROOT/f'candidate-{i}-plus-{a}-metrics.json').read_text()) for i in range(2) for a in ADDITIONS]
             health=[json.loads(line) for line in (ROOT/'health.jsonl').read_text().splitlines()]

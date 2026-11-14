@@ -56,6 +56,7 @@ class PrefixMCCFR(TrajectoryMCCFR):
             if isinstance(frozen,str):
                 from .population import profile_strategy
                 strategy=profile_strategy(state.game.observe(),frozen)
+                getattr(self,'pending_diagnostics',self.diagnostics)[f'population:{frozen}:sampled_actions']+=1
             elif frozen is not None:strategy=normalize(frozen.get(key,[0.]*len(actions)))
             action=self.rng.choices(actions,strategy)[0]
             return self.outcome(state.child(action),updater,delta,inverse_own_sample,scale,own_depth)

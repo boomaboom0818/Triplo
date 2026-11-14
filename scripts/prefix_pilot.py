@@ -11,6 +11,8 @@ def configure():
     driver.EXPECTED_BASES=[4106,4350]
     driver.ADDITIONS=[50,200,500]
     driver.ALGORITHM=ALGORITHM;driver.TRAVERSAL='prefix-v3';driver.PREFIX_DEPTH=2
+    driver.POPULATION=None;driver.FORK_FLAG='--fork-traversal'
+    driver.REQUIRE_TIGHT_IMPROVEMENT=False
     driver.fork_allowed=fork_allowed
     driver.CRITERIA=Path('docs/PREFIX-PILOT.md')
     driver.SCREEN_SEED=8500000;driver.CONFIRM_SEED=8600000
