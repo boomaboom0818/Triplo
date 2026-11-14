@@ -4,7 +4,7 @@ from pathlib import Path
 from collections import Counter
 from datetime import datetime
 from poker.config import load_checkpoint
-from poker.cfr import CFRPolicy,information_key
+from poker.cfr import CFRPolicy,information_key,normalize
 from poker.policy import Policy
 from poker.game import play
 from poker.train import atomic_save
@@ -14,15 +14,21 @@ from scripts.scaling_validation import available_memory
 
 
 class TracedPolicy(CFRPolicy):
-    def __init__(self,*args,groups,missing,**kwargs):
+    def __init__(self,*args,groups,missing,regrets,**kwargs):
         super().__init__(*args,**kwargs);self.groups=groups;self.missing=missing;self.markers=set()
+        self.regrets=regrets;self.current_own_reach=1.
     def act(self,o):
         key=information_key(o,self.abstraction);row=self.sums.get(key)
         source='positive' if row and any(row) else 'missing' if row is None else 'zero'
         action=super().act(o);category='raise' if isinstance(action,int) else action
         group=f'street={o.street}:active={sum(o.active)}:source={source}:price={"paid" if o.call else "free"}'
-        counts=self.groups.setdefault(group,dict(decisions=0,call=0,fold=0,raise_count=0,overbet_raise=0,big_paid_call=0))
+        counts=self.groups.setdefault(group,dict(decisions=0,call=0,fold=0,raise_count=0,overbet_raise=0,big_paid_call=0,current_unreachable=0,current_tiny_reach=0,regret_row=0,positive_regret_row=0))
         counts['decisions']+=1;counts['raise_count' if category=='raise' else category]+=1
+        regrets=self.regrets.get(key)
+        counts['current_unreachable']+=self.current_own_reach==0
+        counts['current_tiny_reach']+=0<self.current_own_reach<1e-6
+        counts['regret_row']+=regrets is not None
+        counts['positive_regret_row']+=bool(regrets and any(x>0 for x in regrets))
         counts['overbet_raise']+=isinstance(action,int) and action>o.pot
         big_call=action=='call' and o.call>o.pot/2
         counts['big_paid_call']+=big_call
@@ -30,6 +36,8 @@ class TracedPolicy(CFRPolicy):
             self.markers.add('fallback_postflop' if o.street else 'fallback_preflop')
             self.missing[hashlib.sha256(key.encode()).hexdigest()]+=1
         if big_call:self.markers.add('large_call_seen')
+        current=normalize(regrets if regrets is not None else [0.]*len(o.legal))
+        self.current_own_reach*=current[o.legal.index(action)]
         return action
 
 
@@ -47,7 +55,7 @@ def audit_one(checkpoint,validation,report_path,blocks,deadline):
                 if time.time()>=deadline:raise TimeoutError('attribution deadline reached')
                 if available_memory()<2*1024**3:raise RuntimeError('hostreserve2GiB reached')
                 policies=[Policy(8600000+block*100+rotation*6+i,{},['calling','tight','aggressive'][i%3] if pop=='mixed' else pop) for i in range(6)]
-                candidate=TracedPolicy(saved['sums'],8600000+block*100+rotation*6+rotation,saved['abstraction'],groups=groups,missing=missing)
+                candidate=TracedPolicy(saved['sums'],8600000+block*100+rotation*6+rotation,saved['abstraction'],groups=groups,missing=missing,regrets=saved['regrets'])
                 policies[rotation]=candidate
                 if pop==key:
                     for i in range(6):
@@ -61,7 +69,7 @@ def audit_one(checkpoint,validation,report_path,blocks,deadline):
         if any(abs(a-b)>1e-10 for a,b in zip(values,expected)):raise ValueError('instrumented replay changed original payoffs')
         result[pop]=dict(decisions=groups,hand_associations=hand_groups,top_missing_key_hashes=missing.most_common(30),replayed_blocks=blocks,exact_payoff_match=True,deal_block_bb_per_100=values)
     assert digest(checkpoint)==before and digest(validation)==op_hash
-    return dict(checkpoint=str(checkpoint.resolve()),checkpoint_sha256=before,opponent_sha256=op_hash,read_only=True,populations=result,caveat='Action/coverage associations from the first existing confirmation blocks, not causal attribution or fresh payoff evidence. No private cards exported, policy RNG/actions/checkpoints unchanged.')
+    return dict(checkpoint=str(checkpoint.resolve()),checkpoint_sha256=before,opponent_sha256=op_hash,read_only=True,populations=result,caveat='Action/coverage associations from existing confirmation blocks, not fresh payoff evidence or proof of causality. Current-unreachable refers only to prior candidate actions having zero probability under frozen current regret strategy, while mean strategy generated the replay. Regret-row presence does not validate its action quality. No private cards exported, policy RNG/actions/checkpoints unchanged.')
 
 
 def main(output,deadline):

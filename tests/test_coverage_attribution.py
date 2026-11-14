@@ -1,4 +1,5 @@
 import json,time
+from collections import Counter
 from poker.train_cfr import train
 from poker.trajectory import AVERAGING
 from poker.evaluate import evaluate
@@ -17,3 +18,17 @@ def test_attribution_exactly_replays_existing_evidence_without_source_changes(tm
     for row in result['populations'].values():
         assert row['exact_payoff_match'] and sum(x['hands'] for x in row['hand_associations'].values())==12
         assert all(sum(v[k] for k in ('call','fold','raise_count'))==v['decisions'] for v in row['decisions'].values())
+
+
+def test_replay_identifies_average_actions_outside_current_strategy_support():
+    from poker.game import Game
+    from poker.cfr import information_key
+    from scripts.coverage_attribution import TracedPolicy
+    o=Game(1).observe();key=information_key(o,'texture-buckets-v2')
+    mean=[0.]*len(o.legal);mean[o.legal.index('call')]=1
+    current=[0.]*len(o.legal);current[o.legal.index('fold')]=1
+    groups={};p=TracedPolicy({key:mean},1,'texture-buckets-v2',groups=groups,missing=Counter(),regrets={key:current})
+    assert p.act(o)=='call' and p.current_own_reach==0
+    p.sums={};p.act(o)
+    missing=next(v for k,v in groups.items() if 'source=missing' in k)
+    assert missing['current_unreachable']==1 and missing['positive_regret_row']==1
