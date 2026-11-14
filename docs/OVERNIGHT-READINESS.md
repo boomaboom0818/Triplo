@@ -1,6 +1,6 @@
 # Overnight readiness — interim handoff
 
-As of 2026-11-14 15:20 UTC; additional frozen-validator screening is still running.
+As of 2026-11-14 15:36 UTC; final development crossplay screening is still running.
 The 17:31 UTC finalizer must update this report with its outcome and shutdown state.
 
 **Operational software is ready for bounded, recoverable local training. Playing
@@ -32,7 +32,11 @@ verified-review.json. Original v1 learners and all earlier v2 snapshots are inta
   estimator change was justified. The diagnostic does not prove harmlessness.
 - The original250 validator remains frozen. A separate750 continuation completed
   within its original250K table cap; additional2000-vs1500/uniform screening is
-  pending. More iterations do not certify that validator's strength.
+  complete, with a nominal positive result for B and inconclusive A. This does not
+  retroactively pass the original gate or certify validator strength.
+- Final development crossplay of2000 vs the other seed's frozen1500 policy is
+  running on seed6,000,000 with2,000blocks. It adds no learner training and remains
+  separate from untouched final-test range6,100,000.
 - Live OpenPoker uses a different check/fold/call fallback on unseen states.
   Separate local evaluation modes/logging expose this difference. No local live
   client or telemetry was observed; no live-play results are included.
@@ -41,7 +45,7 @@ verified-review.json. Original v1 learners and all earlier v2 snapshots are inta
 
 ## Software verification
 
-The final software check passed all76 tests on2026-11-14 before this interim
+The final software check passed all80 tests on2026-11-14 before this interim
 handoff. It covers exact resume/rollback, resource stops/locks, sampler expectation,
 weight instrumentation invariance, report provenance and deadline cleanup.
 
@@ -81,7 +85,7 @@ No cloud resources were used, and no OpenPoker live session/rebuy was started.
 
 See CONFIRMATION-001-RESULTS.md, SUSTAINED-001-RESULTS.md,
 SUSTAINED-002-RESULTS.md, CROSSPLAY-001-RESULTS.md and
-AVERAGING-WEIGHT-INVESTIGATION.md. Full local protocol and checkpoint artifacts
+AVERAGING-WEIGHT-INVESTIGATION.md and SUPPLEMENTAL-SCREENING.md. Full local protocol and checkpoint artifacts
 remain under runs/bot; the overnight journal records each check and recovery.
 
 ## Checkpoint hashes
