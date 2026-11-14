@@ -62,3 +62,18 @@ and records it in the immutable manifest. This label records the evidence review
 it does not run or bypass a statistical gate. Recovery must use the same label.
 The 1,250/1,500 extension after confirmation-001 is explicitly exploratory because
 the two-seed parent-improvement gate did not pass; see CONFIRMATION-001-RESULTS.md.
+
+Review completed stage evidence without rerunning training/evaluations:
+
+```sh
+.venv/bin/python -m scripts.review_sustained --output runs/bot/sustained-001
+```
+
+This manifest-based reader validates initial and per-stage parent hashes, candidate
+configuration, report modes, sample counts/means and paired statistics. It checks
+all newly completed stages and atomically writes `verified-review.json`. Unfinished
+stages remain pending and their files are untouched. Unchanged verified stages
+reuse statistics only when the manifest, checkpoint and every source-report hash
+still match; this keeps periodic checks inexpensive. Tight-script results and
+population-specific coverage remain visible in the derived review. Screen booleans
+are diagnostic evidence, not automatic promotion or a competitive-strength claim.
