@@ -77,3 +77,22 @@ reuse statistics only when the manifest, checkpoint and every source-report hash
 still match; this keeps periodic checks inexpensive. Tight-script results and
 population-specific coverage remain visible in the derived review. Screen booleans
 are diagnostic evidence, not automatic promotion or a competitive-strength claim.
+
+## Additional independent-learner screening
+
+`scripts.crossplay_check` waits for complete 1,500-iteration checkpoints and
+screens each against the other seed's frozen 1,000-iteration policy, with paired
+comparisons to its own 1,000-iteration parent and uniform play. New development
+seed 5,600,000, 1,000 independent deal blocks, one candidate versus five copies
+of the other policy; separate output `runs/bot/crossplay-001`. The original
+250-iteration validator and existing promotion criteria remain unchanged.
+
+Seed/configuration and direct/archive policy-overlap checks protect this
+additional screening from candidate-training reuse. Both seeds have independent
+training lineages and were never trained against each other. More training does
+not establish that the frozen opponent is strong. Absolute payoffs between A
+and B cannot rank them here because they face different opposing policies.
+Report paired changes within each fixed opponent population instead. The check
+is exploratory, not a new passed gate or final-test certification; final-test
+seed 6,100,000 remains untouched. It runs evaluation-only workers under 3 GiB
+limits, output locks, atomic validation and the overnight deadline.
