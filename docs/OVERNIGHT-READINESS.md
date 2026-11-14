@@ -1,97 +1,121 @@
-# Overnight readiness — interim handoff
+# Overnight training handoff
 
-As of 2026-11-14 15:36 UTC; final development crossplay screening is still running.
-The 17:31 UTC morning checkpoint must update this report with its outcome and
-actual continuation state. The user authorized continuing beyond the morning
-cutoff if necessary; there is no automatic global shutdown. Per-job deadlines
-and resource protections remain in force.
+Completed 2026-11-14. The user authorized work beyond the morning checkpoint;
+all planned jobs finished normally before any finite job deadline was reached.
 
-**Operational software is ready for bounded, recoverable local training. Playing
-strength is not established, and the two-seed promotion gate remains unmet.**
-No candidate was deployed to OpenPoker or relabeled as a validated winner.
+**The local training setup is operational and recoverable. The evidence threshold
+for a broad sustained campaign has not passed. No competitive-strength claim or
+live promotion is made.**
 
-## Preserved candidates
+## Preserved checkpoints
 
-| Learner | Most advanced checkpoint | Iterations | Union information sets |
-|---|---|---:|---:|
-| A | `runs/bot/sustained-002/candidate-0-2000.json` | 2000 | 228,969 |
-| B | `runs/bot/sustained-002/candidate-1-2000.json` | 2000 | 223,760 |
+All historical checkpoints remain intact, including the original v1 campaign,
+both v2 seeds through2000, matched historical controls and explicit diversity
+forks through2100, and separate frozen validation250/750 snapshots.
 
-These are the most advanced checkpoints of the unchanged v2/call-mixture recipe,
-not a statistically established ranking. Initial/per-stage parent paths and
-hashes, recipe settings and paired reports remain in the run manifests and
-verified-review.json. Original v1 learners and all earlier v2 snapshots are intact.
+| Learner | Recipe | Most recent reviewed v2 snapshot | SHA256 prefix |
+|---|---|---|---|
+| A | control | [2100 checkpoint](/home/boomaboom0818/Triplo-Texas-Holdem-Poker-/runs/bot/population-pilot-001/candidate-0-control.json) | a08a05444e16 |
+| A | diverse | [2100 checkpoint](/home/boomaboom0818/Triplo-Texas-Holdem-Poker-/runs/bot/population-pilot-001/candidate-0-diverse.json) | f375ce4d1120 |
+| B | control | [2100 checkpoint](/home/boomaboom0818/Triplo-Texas-Holdem-Poker-/runs/bot/population-pilot-001/candidate-1-control.json) | f6296bb388ce |
+| B | diverse | [2100 checkpoint](/home/boomaboom0818/Triplo-Texas-Holdem-Poker-/runs/bot/population-pilot-001/candidate-1-diverse.json) | df7403064db1 |
 
-## Evidence and limitations
+“Most recent” is not a statistical ranking. The diversity forks are experimental;
+retain historical controls for continuation comparisons. Exact hashes, parent
+configurations and paired results are in
+[runs/bot/population-pilot-001/verified-review.json](../runs/bot/population-pilot-001/verified-review.json).
+No source checkpoint was overwritten or learning silently reset.
 
-- Both learners completed500/750/1,000/1,250/1,500/1,750/2,000 and evaluations.
-- Independent development screening at1,000 found A's improvement, while B's
-  parent comparison remained inconclusive: the two-seed gate failed.
-- Later incremental payoff results and independent-learner crossplay did not
-  establish robust additional gains. Tight-script and unseen-state coverage gaps
-  persist. No established strong benchmark opponent is integrated.
-- Large averaging weights were measured and investigated; all moments remained
-  finite and sampled covered policies were mostly stable. No clipping/reset or
-  estimator change was justified. The diagnostic does not prove harmlessness.
-- The original250 validator remains frozen. A separate750 continuation completed
-  within its original250K table cap; additional2000-vs1500/uniform screening is
-  complete, with a nominal positive result for B and inconclusive A. This does not
-  retroactively pass the original gate or certify validator strength.
-- Final development crossplay of2000 vs the other seed's frozen1500 policy is
-  running on seed6,000,000 with2,000blocks. It adds no learner training and remains
-  separate from untouched final-test range6,100,000.
-- Live OpenPoker uses a different check/fold/call fallback on unseen states.
-  Separate local evaluation modes/logging expose this difference. No local live
-  client or telemetry was observed; no live-play results are included.
-- Final-test seed6,100,000 remains untouched. Development/nominal intervals are
-  not competitive certification or a multiplayer equilibrium guarantee.
+## What improved and what remains unresolved
 
-## Software verification
+- Postflop coverage improved after the separately versioned abstraction and
+  corrected call-mixture sampling pilots. The earlier near-zero coverage problem
+  was measured rather than treated as proof of a version mismatch.
+- The independent1000-iteration development check passed A's screen, but B's
+  parent comparison remained inconclusive. The original two-seed gate failed.
+- Later bounded extensions through2000 and independent-learner crossplay did not
+  establish consistent incremental payoff gains. Scripted tight-agent gaps persist.
+- Additional frozen750-validator screening was nominally favorable for B and
+  inconclusive for A. It does not retroactively pass the original gate or certify
+  the opponent as strong.
+- The final matched population pilot preserved both2000 parents and compared100
+  additional historical-control iterations with an explicit diversity fork.
+  Diverse-minus-control learned-opponent payoff was A +30.53 BB/100
+  [-18.64,80.14] and B -23.92 [-74.06,27.17]. Both paired95% intervals include0;
+  the effect is inconsistent across seeds. The diversity recipe is NOT promoted.
+- Large importance-weighted averaging updates were investigated. All moments
+  were finite; sampled covered policies were mostly stable. This did not justify
+  clipping weights, resetting learning or modifying the estimator.
+- Scripted styles are training-related diagnostics for the population pilot;
+  validation agents were never used as training opponents. There is no established
+  strong benchmark. Nominal development intervals and repeated screening are not
+  competitive certification, final-test evidence or equilibrium guarantees.
 
-The final software check passed all80 tests on2026-11-14 before this interim
-handoff. It covers exact resume/rollback, resource stops/locks, sampler expectation,
-weight instrumentation invariance, report provenance and deadline cleanup.
+## Operational readiness
 
-## Operating and recovery
+The runner preserves immutable parent hashes, exact recipe/RNG/archive state,
+3 GiB per-child address-space caps, node/table limits, checkpoints and previous
+snapshots, output locks, validated atomic reports, paired deal-block statistics,
+explicit recipe forks and finite per-job deadlines. Known interrupted/time-stopped
+runs can resume; unresolved OOM/node/table/corruption or no-progress failures stop
+for investigation. No unchanged resource-failure retry loop was introduced.
 
-The runner preserves recipe/seed/archive settings, immutable checkpoint lineage,
-3 GiB per-child address-space limits, node/table caps, checkpoint intervals,
-validated atomic evaluation reports and output locks. A hard deadline stops new
-launches and requests graceful checkpointing. Known interruption/time stops can
-resume; unresolved OOM/node/table/corruption failures halt for investigation.
+Software checks passed: full83-test suite, the additional explicit-fork preservation
+check, and two pilot-recovery tests. The fork/resume checks cover preserved parent
+bytes, regrets/averages/archive/RNG, rollback, implicit-fork refusal, lineage checks,
+completed-work skipping and avoidance of applying the fork twice. No new code has
+been added since those relevant checks except documentation.
 
-Verify current learner evidence:
+Verify completed historical continuation evidence:
 
 ```sh
 .venv/bin/python -m scripts.review_sustained --output runs/bot/sustained-002
 ```
 
-For an interrupted current extension, first verify there is no active writer, then
-use the exact original command plus --resume (deadline remains the authorized cutoff):
+Exact pilot recovery command, only after an actual interruption and verifying
+there is no active writer:
 
 ```sh
-.venv/bin/python -m scripts.sustained_train \
-  --output runs/bot/sustained-002 \
-  --parents runs/bot/sustained-001/candidate-0-1500.json runs/bot/sustained-001/candidate-1-1500.json \
-  --stages 1750 2000 \
-  --validation runs/bot/campaign-001/validation-250.json \
-  --seed 5700000 --purpose exploratory \
-  --deadline 2026-11-14T17:31:00+00:00 --resume
+.venv/bin/python -m scripts.population_pilot --resume
 ```
 
-The current learner extension is complete and does not need restarting. Future
-training needs a new output directory and declared stages/deadline, following
-SUSTAINED-TRAINING.md. Do not extend merely to claim the failed evidence gate passed.
-No cloud resources were used, and no OpenPoker live session/rebuy was started.
+No recovery or restart is needed now: all current runs completed and their
+reports were verified. For a new planned research campaign, use the configurable
+runner and finite-deadline procedure in SUSTAINED-TRAINING.md; do not call a failed
+promotion gate passed or launch endless unchanged extensions.
 
-## Source results
+## OpenPoker and resources
 
-See CONFIRMATION-001-RESULTS.md, SUSTAINED-001-RESULTS.md,
-SUSTAINED-002-RESULTS.md, CROSSPLAY-001-RESULTS.md and
-AVERAGING-WEIGHT-INVESTIGATION.md and SUPPLEMENTAL-SCREENING.md. Full local protocol and checkpoint artifacts
-remain under runs/bot; the overnight journal records each check and recovery.
+The adapter is installed/tested locally and logs checkpoint hash plus coverage/
+action type without cards/tokens. It has a different unseen-state check/fold/call
+fallback, evaluated separately. No local live session or live telemetry was
+observed and authenticated behavior was not verified. No live checkpoint, rebuy
+setting or connection was changed by this work. No live-play returns are pooled
+with local controlled results.
 
-## Checkpoint hashes
+No cloud resources were used. RAM/disk and actual worker processes were checked
+throughout; no duplicate training writers were launched. All completed results
+and source are retained. The reserved final-test range6100000 remains untouched.
 
-- A: `6971791302ac3c0d84507603972265fff7a61853cd1327217b2bf91b9e663628`
-- B: `70b18f614d15a3ea7b9b1d9d13eada7c013fe747082ed1bec2029b04c51368fd`
+## Next research decision
+
+The setup can run further bounded, evaluated experiments. The model is not yet
+qualified for a broad sustained campaign by the agreed evidence gate. A useful
+next research proposal needs a specific remaining hypothesis, an independently
+validated stronger opponent, both-seed controls and measured payoff/robustness
+criteria; simply adding more iterations or choosing a favorable development
+result is not enough. No statistically established best checkpoint was selected.
+
+## Evidence index
+
+- CONFIRMATION-001-RESULTS.md: independent development check.
+- SUSTAINED-001-RESULTS.md and SUSTAINED-002-RESULTS.md: retained learning curves.
+- CROSSPLAY-001-RESULTS.md and CROSSPLAY-002-RESULTS.md: independent learned opponents.
+- AVERAGING-WEIGHT-INVESTIGATION.md: weight concentration and inference drift.
+- SUPPLEMENTAL-SCREENING.md: separate frozen validator continuation.
+- POPULATION-PILOT.md: controlled curriculum protocol and recovery.
+- runs/bot/overnight-2026-11-14/journal.md: timestamped monitoring/recovery record.
+
+Schedule state will be recorded after disabling recurring checks: all authorized
+local runs and the handoff are complete; playing-strength limitations remain
+explicit rather than triggering unbounded blind training.
