@@ -16,3 +16,25 @@ def test_reject_archived_training_opponent(tmp_path):
     candidate=tmp_path/'candidate.json';atomic_save(candidate,checkpoint)
     with pytest.raises(ValueError,match='overlaps'):
         evaluate(candidate,2,1,1,opponent_checkpoints=[path])
+
+
+def test_coverage_distinguishes_missing_zero_and_positive_rows():
+    from poker.evaluate import coverage_counts, record_coverage
+    counts = coverage_counts()
+    for row in (None, [0.0, 0.0], [0.0, 2.0]):
+        record_coverage(counts, row)
+    assert counts == dict(decisions=3, missing_rows=1, zero_weight_rows=1,
+                          positive_weight_rows=1)
+
+
+def test_evaluation_coverage_reconciles_by_street():
+    report = evaluate('artifacts/bot/cfr-smoke.json', 2, 123456, 1)
+    for population in report['populations'].values():
+        counts = population['coverage_counts']
+        assert counts['decisions'] == population['candidate_decisions']
+        assert counts['positive_weight_rows'] + counts['zero_weight_rows'] == population['covered_candidate_decisions']
+        for key in counts:
+            assert sum(street[key] for street in population['coverage_by_street'].values()) == counts[key]
+        assert sum(counts[key] for key in ('missing_rows', 'zero_weight_rows', 'positive_weight_rows')) == counts['decisions']
+        assert population['uniform_fallback_fraction'] == (counts['missing_rows'] + counts['zero_weight_rows']) / counts['decisions']
+        assert population['latency_scope'] == 'all_table_decisions'

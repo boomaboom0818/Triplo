@@ -6,6 +6,20 @@ from .policy import Policy
 from .cfr import CFRPolicy,information_key
 from .config import load_checkpoint, load_config
 
+def coverage_counts():
+    return dict(decisions=0, missing_rows=0, zero_weight_rows=0, positive_weight_rows=0)
+
+
+def record_coverage(counts, row):
+    counts['decisions'] += 1
+    if row is None:
+        counts['missing_rows'] += 1
+    elif not any(weight > 0 for weight in row):
+        counts['zero_weight_rows'] += 1
+    else:
+        counts['positive_weight_rows'] += 1
+
+
 def evaluate(path,blocks,seed,copies,config_path="configs/bot.json",opponent_checkpoints=()):
     config=load_config(config_path)
     if config["status"] != "active":
@@ -25,6 +39,7 @@ def evaluate(path,blocks,seed,copies,config_path="configs/bot.json",opponent_che
         opponents['checkpoint:'+digest]=opponent
     for population in ['calling','tight','aggressive','blueprint','mixed']+list(opponents):
         start=time.perf_counter(); values=[]; latency=[];covered=0;decisions=0
+        coverage=coverage_counts(); by_street={str(i):coverage_counts() for i in range(4)}
         for block in range(blocks):
             results=[]
             # A block reuses one deal across all six candidate seat rotations.
@@ -46,13 +61,19 @@ def evaluate(path,blocks,seed,copies,config_path="configs/bot.json",opponent_che
                     for i in candidates:
                         for observation,_ in traces[i]:
                             decisions+=1
-                            covered+=information_key(observation,checkpoint['abstraction']) in checkpoint['sums']
+                            row=checkpoint['sums'].get(information_key(observation,checkpoint['abstraction']))
+                            covered+=row is not None
+                            record_coverage(coverage,row)
+                            record_coverage(by_street[str(observation.street)],row)
             values.append(statistics.mean(results)*100)
         rng=Random(seed); boot=sorted(statistics.mean(rng.choices(values,k=blocks)) for _ in range(2000))
         reports[population]=dict(bb_per_100=statistics.mean(values),ci95_cluster_bootstrap=[boot[50],boot[1949]],
             independent_deal_blocks=blocks,table_hands=6*blocks,candidate_hands=6*blocks*copies,
             candidate_decisions=decisions,covered_candidate_decisions=covered,
             policy_coverage=covered/decisions if decisions else None,
+            coverage_counts=coverage, coverage_by_street=by_street,
+            uniform_fallback_fraction=(coverage['missing_rows']+coverage['zero_weight_rows'])/decisions if decisions else None,
+            latency_scope="all_table_decisions",
             decision_p95_ms=1000*sorted(latency)[int(.95*(len(latency)-1))],
             decision_mean_ms=1000*statistics.mean(latency),wall_seconds=time.perf_counter()-start)
     return dict(checkpoint_sha256=candidate_hash,opponent_checkpoint_hashes=list(opponents),algorithm=checkpoint['algorithm'],config=config,seed=seed,copies=copies,populations=reports,warning='Smoke benchmark only; no strong held-out opponent integrated.')
