@@ -4,7 +4,8 @@ from random import Random
 from statistics import mean
 
 
-def paired_difference(candidate,control):
+def paired_difference(candidate,control,confidence=.95):
+    if not 0<confidence<1:raise ValueError("confidence must be between zero and one")
     for key in ('seed','copies','opponent_checkpoint_hashes'):
         if candidate[key]!=control[key]:raise ValueError('unmatched evaluation design')
     if candidate['populations'].keys()!=control['populations'].keys():raise ValueError('unmatched populations')
@@ -18,5 +19,8 @@ def paired_difference(candidate,control):
         differences=[x-y for x,y in zip(a,b)]
         rng=Random(candidate['seed'])
         samples=sorted(mean(rng.choices(differences,k=len(differences))) for _ in range(2000))
-        result[name]={'difference_bb_per_100':mean(differences),'ci95':[samples[50],samples[1949]],'independent_deal_blocks':len(a)}
+        tail=(1-confidence)/2
+        low=math.floor(tail*len(samples));high=math.ceil((1-tail)*len(samples))-1
+        result[name]={'difference_bb_per_100':mean(differences),'ci95' if confidence==.95 else 'interval':[samples[low],samples[high]],'independent_deal_blocks':len(a)}
+        if confidence!=.95:result[name]['confidence']=confidence
     return result
