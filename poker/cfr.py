@@ -74,7 +74,13 @@ class MCCFR:
             for a,p in zip(actions,strategy):
                 if p:self.average(state.child(a),owner,own_reach*p,inverse_sample)
         else:
-            self.average(state.child(self.rng.choice(actions)),owner,own_reach,inverse_sample*len(actions))
+            if getattr(self,'averaging_sampler','uniform')=='call-mixture-v1' and 'call' in actions:
+                # Full support: 50% uniform slots, 50% call. Correct each sampled reach.
+                probabilities=[.5/len(actions)+(.5 if a=='call' else 0) for a in actions]
+                index=self.rng.choices(range(len(actions)),probabilities)[0]
+                self.average(state.child(actions[index]),owner,own_reach,inverse_sample/probabilities[index])
+            else:
+                self.average(state.child(self.rng.choice(actions)),owner,own_reach,inverse_sample*len(actions))
 
     def step(self,factory,players,max_nodes=None,deadline=None,opponents=None):
         # An interrupted traversal must not leak partial averages or RNG state.

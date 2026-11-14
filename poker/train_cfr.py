@@ -31,16 +31,16 @@ def run_lock(path):
 def train(iterations,path,seed=1,game='kuhn',players=6,resume=None,*,
           checkpoint_every=100,max_iteration_nodes=100000,max_seconds=3600,
           max_information_sets=500000,abstraction="exact-observation-v1",
-          population_probability=0.0,archive_every=100,archive_size=4):
+          population_probability=0.0,archive_every=100,archive_size=4,averaging_sampler="uniform"):
     with run_lock(path):
         return _train(iterations,path,seed,game,players,resume,checkpoint_every,
                       max_iteration_nodes,max_seconds,max_information_sets,abstraction,
-                      population_probability,archive_every,archive_size)
+                      population_probability,archive_every,archive_size,averaging_sampler)
 
 
 def _train(iterations,path,seed,game,players,resume,checkpoint_every,
            max_iteration_nodes,max_seconds,max_information_sets,abstraction,
-           population_probability,archive_every,archive_size):
+           population_probability,archive_every,archive_size,averaging_sampler):
     if abstraction not in ("exact-observation-v1",VERSION,VERSION_V2):raise ValueError("unsupported abstraction")
     if not 0<=population_probability<=1:raise ValueError("invalid population probability")
     for value in (checkpoint_every,max_iteration_nodes,max_information_sets,archive_every,archive_size):
@@ -53,7 +53,9 @@ def _train(iterations,path,seed,game,players,resume,checkpoint_every,
                 archive_every=archive_every,archive_size=archive_size)
     if Path(path).exists() and (resume is None or Path(path).resolve()!=Path(resume).resolve()):
         raise ValueError('output exists; use resume or a new path')
-    solver=MCCFR(seed);seconds=0;archive=[]
+    if averaging_sampler not in ("uniform","call-mixture-v1"):raise ValueError("unsupported averaging sampler")
+    if averaging_sampler!="uniform":config["averaging_sampler"]=averaging_sampler
+    solver=MCCFR(seed);solver.averaging_sampler=averaging_sampler;seconds=0;archive=[]
     solver.stop_requested=lambda: _STOP_REQUESTED
     if resume:
         saved=json.loads(Path(resume).read_text())
@@ -135,14 +137,16 @@ if __name__=='__main__':
     p.add_argument('--population-probability',type=float,default=0.0)
     p.add_argument('--archive-every',type=int,default=100)
     p.add_argument('--archive-size',type=int,default=4)
+    p.add_argument('--averaging-sampler',choices=['uniform','call-mixture-v1'],default='uniform')
     a=p.parse_args()
     settings=dict(iterations=a.iterations,seed=a.seed,game=a.game,players=a.players,
                   checkpoint_every=a.checkpoint_every,max_iteration_nodes=a.max_iteration_nodes,
                   max_seconds=a.max_seconds,max_information_sets=a.max_information_sets,
                   abstraction=a.abstraction,population_probability=a.population_probability,
-                  archive_every=a.archive_every,archive_size=a.archive_size)
+                  archive_every=a.archive_every,archive_size=a.archive_size,averaging_sampler=a.averaging_sampler)
     if a.config:
         cfg=json.loads(Path(a.config).read_text())
+        cfg.setdefault('averaging_sampler','uniform')
         if cfg.pop('schema',None)!=1 or set(cfg)!=set(settings):raise ValueError('invalid CFR run config')
         settings=cfg  # Run configuration is authoritative; CLI output/resume remain independent.
     signal.signal(signal.SIGTERM,stop_signal)

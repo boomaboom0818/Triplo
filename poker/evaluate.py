@@ -20,7 +20,7 @@ def record_coverage(counts, row):
         counts['positive_weight_rows'] += 1
 
 
-def evaluate(path,blocks,seed,copies,config_path="configs/bot.json",opponent_checkpoints=()):
+def evaluate(path,blocks,seed,copies,config_path="configs/bot.json",opponent_checkpoints=(),uniform_control=False):
     config=load_config(config_path)
     if config["status"] != "active":
         raise ValueError("human-opponent model is deferred; use configs/bot.json")
@@ -37,8 +37,11 @@ def evaluate(path,blocks,seed,copies,config_path="configs/bot.json",opponent_che
         if opponent['sums']==checkpoint.get('sums') or opponent['sums'] in checkpoint.get('archive',[]):
             raise ValueError('held-out opponent overlaps candidate training population')
         opponents['checkpoint:'+digest]=opponent
+    if uniform_control:
+        checkpoint=dict(checkpoint,sums={});table={}
     for population in ['calling','tight','aggressive','blueprint','mixed']+list(opponents):
         start=time.perf_counter(); values=[]; latency=[];covered=0;decisions=0
+        by_active={str(i):coverage_counts() for i in range(2,7)}
         coverage=coverage_counts(); by_street={str(i):coverage_counts() for i in range(4)}
         for block in range(blocks):
             results=[]
@@ -65,6 +68,7 @@ def evaluate(path,blocks,seed,copies,config_path="configs/bot.json",opponent_che
                             covered+=row is not None
                             record_coverage(coverage,row)
                             record_coverage(by_street[str(observation.street)],row)
+                            if observation.street:record_coverage(by_active[str(sum(observation.active))],row)
             values.append(statistics.mean(results)*100)
         rng=Random(seed); boot=sorted(statistics.mean(rng.choices(values,k=blocks)) for _ in range(2000))
         reports[population]=dict(bb_per_100=statistics.mean(values),ci95_cluster_bootstrap=[boot[50],boot[1949]],
@@ -72,15 +76,17 @@ def evaluate(path,blocks,seed,copies,config_path="configs/bot.json",opponent_che
             candidate_decisions=decisions,covered_candidate_decisions=covered,
             policy_coverage=covered/decisions if decisions else None,
             coverage_counts=coverage, coverage_by_street=by_street,
+            postflop_coverage_by_active=by_active,deal_block_bb_per_100=values,
             uniform_fallback_fraction=(coverage['missing_rows']+coverage['zero_weight_rows'])/decisions if decisions else None,
             latency_scope="all_table_decisions",
             decision_p95_ms=1000*sorted(latency)[int(.95*(len(latency)-1))],
             decision_mean_ms=1000*statistics.mean(latency),wall_seconds=time.perf_counter()-start)
-    return dict(checkpoint_sha256=candidate_hash,opponent_checkpoint_hashes=list(opponents),algorithm=checkpoint['algorithm'],config=config,seed=seed,copies=copies,populations=reports,warning='Smoke benchmark only; no strong held-out opponent integrated.')
+    return dict(uniform_control=uniform_control,checkpoint_sha256=candidate_hash,opponent_checkpoint_hashes=list(opponents),algorithm=checkpoint['algorithm'],config=config,seed=seed,copies=copies,populations=reports,warning='Smoke benchmark only; no strong held-out opponent integrated.')
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('--checkpoint',default='runs/bot/seed1.json')
     p.add_argument('--blocks',type=int,default=20);p.add_argument('--seed',type=int,default=100000)
     p.add_argument('--copies',type=int,choices=range(1,7),default=1)
     p.add_argument('--config',default='configs/bot.json')
     p.add_argument('--opponent-checkpoints',nargs='*',default=[])
-    a=p.parse_args(); print(json.dumps(evaluate(a.checkpoint,a.blocks,a.seed,a.copies,a.config,a.opponent_checkpoints),indent=2))
+    p.add_argument('--uniform-control',action='store_true')
+    a=p.parse_args(); print(json.dumps(evaluate(a.checkpoint,a.blocks,a.seed,a.copies,a.config,a.opponent_checkpoints,a.uniform_control),indent=2))
