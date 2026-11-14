@@ -31,6 +31,12 @@ def resume_checkpoint(path,parent,target):
 
 
 def evaluate_cached(args,path):
+    # Shared with supplemental evaluators and resumed supervisors.
+    with run_lock(path):
+        return _evaluate_cached(args,path)
+
+
+def _evaluate_cached(args,path):
     checkpoint=Path(args[args.index('--checkpoint')+1])
     def validate(r):
         if (r['checkpoint_sha256']!=digest(checkpoint) or r['seed']!=5300000 or r['copies']!=1

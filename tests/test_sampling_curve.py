@@ -27,3 +27,23 @@ def test_invalid_evaluation_never_published(tmp_path,monkeypatch):
     with pytest.raises(json.JSONDecodeError):curve.evaluate_cached(['poker.evaluate','--checkpoint',str(checkpoint)],output)
     assert not output.exists()
     assert (tmp_path/'report.json.pending').exists()
+
+
+def test_report_lock_prevents_duplicate_evaluation(tmp_path):
+    from poker.train_cfr import run_lock
+    path=tmp_path/'report.json'
+    with run_lock(path):
+        with pytest.raises(ValueError,match='another trainer'):
+            curve.evaluate_cached([],path)
+
+
+def test_supplemental_requires_complete_target(monkeypatch,tmp_path):
+    from scripts import evaluate_curve_stage as stage
+    path=tmp_path/'checkpoint';path.touch()
+    data={'iterations':700,'stop_reason':'running'}
+    monkeypatch.setattr(stage,'load_checkpoint',lambda *a,**kw:data)
+    assert not stage.ready(path,750)
+    data.update(iterations=750,stop_reason='target_reached')
+    assert stage.ready(path,750)
+    data['iterations']=1000
+    with pytest.raises(ValueError):stage.ready(path,750)

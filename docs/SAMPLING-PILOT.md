@@ -96,3 +96,16 @@ The OpenPoker-style check/fold/call fallback folds many additional uncovered
 preflop states and materially changes this matchup. Keep live checkpoint/fallback
 changes separate from the training recipe and do not deploy a fallback change
 based on this scripted result alone.
+
+For an older active supervisor that omits the 750 evaluation, use the companion:
+
+```sh
+.venv/bin/python -m scripts.evaluate_curve_stage --stage 750 --wait --deadline 2026-11-14T17:31:00+00:00
+```
+
+It waits for target_reached snapshots, verifies/caches reference and stage reports,
+keeps its own status file, and uses shared per-report locks to avoid duplicate
+output writers with a resumed supervisor. It never trains or modifies checkpoints.
+Its wait is bounded by the overnight deadline and it reports missing snapshots if
+the main curve stops. A running evaluation may finish after the wait deadline;
+the overnight finalizer is responsible for stopping active workers at the cutoff.
