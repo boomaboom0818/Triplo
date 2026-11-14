@@ -1,7 +1,10 @@
 # Overnight readiness — interim handoff
 
 As of 2026-11-14 15:36 UTC; final development crossplay screening is still running.
-The 17:31 UTC finalizer must update this report with its outcome and shutdown state.
+The 17:31 UTC morning checkpoint must update this report with its outcome and
+actual continuation state. The user authorized continuing beyond the morning
+cutoff if necessary; there is no automatic global shutdown. Per-job deadlines
+and resource protections remain in force.
 
 **Operational software is ready for bounded, recoverable local training. Playing
 strength is not established, and the two-seed promotion gate remains unmet.**
