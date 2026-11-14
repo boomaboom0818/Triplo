@@ -42,7 +42,7 @@ def main(output,deadline):
     with run_lock(output):
         if output.exists():raise ValueError('probe exists; preserve and review')
         parents=[Path(f'runs/bot/prefix-pilot-001/candidate-{i}-plus-500.json') for i in range(2)]
-        manifest=dict(inputs=[dict(path=str(p.resolve()),sha256=digest(p)) for p in parents],stream_seeds=[9400000,9401000],replicates=64,deadline=deadline,code_sha256=digest(Path(__file__)),read_only=True,criterion='Guarded heads-up/3player owner postflop visits per node>=2xhistorical in>=3/4fixtures (ifbase0 require>=20visits), eachguardedfixture>=20visits andmaxtrace<=10000. Engineering screen only.')
+        manifest=dict(inputs=[dict(path=str(p.resolve()),sha256=digest(p)) for p in parents],stream_seeds=[9400000,9401000],replicates=64,deadline=deadline,code_sha256=digest(Path(__file__)),algorithm_sources={str(p):digest(p) for p in Path('poker').glob('*.py')},read_only=True,criterion='Guarded heads-up/3player owner postflop visits per node>=2xhistorical in>=3/4fixtures (ifbase0 require>=20visits), eachguardedfixture>=20visits andmaxtrace<=10000. Engineering screen only.')
         atomic_save(output.with_suffix('.manifest.json'),manifest);fixtures=[]
         for i,parent in enumerate(parents):
             saved=load_checkpoint(parent);cfg=saved['config']
@@ -68,6 +68,8 @@ def main(output,deadline):
                 fixtures.append(f)
             assert digest(parent)==manifest['inputs'][i]['sha256']
             del s,saved
+        for path,sha in manifest['algorithm_sources'].items():
+            if digest(Path(path))!=sha:raise ValueError('probe algorithm source changed')
         atomic_save(output,dict(status='completed',read_only=True,fixtures=fixtures,eligible_for_curriculum_pilot_review=sum(f['engineering_pass'] for f in fixtures)>=3,caveat='Deliberately changed opponent distribution, not estimator variance/payoff/strength evidence. No learning delta committed or checkpoint changed. A production curriculum would need explicit new recipe/fork and prospective independent payoff/coverage gates; scripted training profile gains would not be held-out generalization.'))
 
 if __name__=='__main__':
