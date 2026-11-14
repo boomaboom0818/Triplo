@@ -50,3 +50,27 @@ policy/fallback change, not training alone. Live results are observational and
 must not be pooled with controlled local results. The client now logs checkpoint
 hash, coverage and action type, never cards or authentication tokens. Running
 local experiments does not start or restart a live OpenPoker client.
+
+## Curve recovery and report integrity
+
+After investigating a stopped curve and confirming no active supervisor/writer:
+
+```sh
+.venv/bin/python -m scripts.sampling_curve --resume
+```
+
+The supervisor lock prevents duplicate curve writers. Resume checks manifest
+parents/design, checkpoint recipe and iteration bounds, and valid saved RNG state.
+Complete stages are skipped. Only interruption/running/time-budget stops permit
+incomplete-stage recovery; node/table/unknown failures require investigation.
+Existing reports must match candidate/opponent hashes, mode, seed and deal counts.
+New evaluation output is written to `.pending`, validated, then atomically
+published. A malformed legacy final report is preserved and causes an explicit
+stop; inspect and quarantine it before re-evaluation rather than silently trusting
+or replacing it. A checkpoint failing validation also stops recovery; independently
+verify `.previous` before any manual recovery.
+
+The updated runner evaluates all stages, including 750. A supervisor already
+running the earlier code continues its loaded implementation, so overnight
+monitoring supplies the missing 750-stage evaluations in that case. This change
+does not restart or modify an active learner's algorithm.
