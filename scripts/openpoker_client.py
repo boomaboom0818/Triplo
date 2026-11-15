@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 from pathlib import Path
 from uuid import uuid4
 from urllib.request import Request, urlopen
@@ -73,6 +74,9 @@ def decision(snapshot, policy):
     else:
         action = policy.act(observation)
     LOG.info('Decision street=%s active=%s covered=%s action=%s',street,sum(observation.active),bool(row and any(row)),wire[action]['action'])
+    # Diagnostics for the optional session log; never sent on the wire.
+    decision.last = dict(hand_id=hand, seat=hero['seat'], street=street, active=sum(observation.active),
+                         covered=bool(row and any(row)), action=wire[action]['action'], amount=wire[action].get('amount'))
     return dict(type='action', hand_id=hand, turn_token=token,
                 client_action_id=str(uuid4()), **wire[action])
 
@@ -85,12 +89,24 @@ def active_game(key):
         return json.load(response)
 
 
+def record(path, **row):
+    """Append one JSON line to the optional read-only session log."""
+    if path is None:
+        return
+    with Path(path).open('a') as handle:
+        handle.write(json.dumps(dict(time=time.time(), **row)) + '\n')
+
+
 async def run(args, policy, key):
     from websockets.asyncio.client import connect
     from websockets.exceptions import ConnectionClosed
     delay = 1
     # Retain exact payloads for token duplicates, including across reconnects.
     pending = {}
+    log = getattr(args, 'log', None)
+    minutes = getattr(args, 'max_minutes', None)
+    stop_at = None if minutes is None else time.monotonic() + 60 * minutes
+    seat = None
     while True:
         try:
             async with connect('wss://openpoker.ai/ws', additional_headers={
@@ -125,12 +141,22 @@ async def run(args, policy, key):
                                 except (KeyError, ValueError, StopIteration) as exc:
                                     LOG.error('Cannot translate snapshot: %s', exc)
                                     continue
+                                seat = hero.get('seat', seat)
+                                record(log, type='decision', **decision.last)
                             await send(pending[identity])
                     elif kind in ('table_closed', 'season_ended', 'rebuy_confirmed'):
                         pending.clear()
                         await join()
+                    elif kind == 'table_joined':
+                        seat = msg.get('seat', seat)
+                        record(log, type='table_joined', table_id=msg.get('table_id'), seat=seat, players=len(msg.get('players', [])))
                     elif kind == 'hand_result':
                         pending.clear()
+                        record(log, type='hand_result', seat=seat, result={k: v for k, v in msg.items() if k != 'type'})
+                        # Stop only between hands so no live decision is abandoned.
+                        if stop_at is not None and time.monotonic() >= stop_at:
+                            LOG.info('Session time limit reached between hands')
+                            return
                     elif kind == 'error' and msg.get('code') == 'already_seated':
                         await send(dict(type='resync_request', table_id=msg['table_id']))
                     elif kind in ('error', 'action_rejected'):
@@ -153,6 +179,8 @@ def main():
     parser.add_argument('--buy-in', type=int, choices=range(1000, 5001), default=2000, metavar='1000..5000')
     parser.add_argument('--auto-rebuy', action='store_true')
     parser.add_argument('--seed', type=int, default=0)
+    parser.add_argument('--log', type=Path, help='append decisions and hand results as JSON lines')
+    parser.add_argument('--max-minutes', type=float, help='stop after the first completed hand past this many minutes')
     args = parser.parse_args()
     saved = load_checkpoint(args.checkpoint, model_id='bot-opponent-v1')
     if saved.get('abstraction') != 'texture-buckets-v2':

@@ -57,3 +57,18 @@ def test_active_game_sets_user_agent_and_bearer(monkeypatch):
         return io.BytesIO(b'{"playing": false}')
     monkeypatch.setattr(client, 'urlopen', respond)
     assert client.active_game('test-placeholder') == {'playing': False}
+
+
+def test_session_log_records_diagnostics_without_changing_wire_payload(tmp_path):
+    import json
+    from scripts.openpoker_client import record
+    action = decision(snapshot(), CFRPolicy({}, abstraction='texture-buckets-v2'))
+    assert set(action) == {'type', 'hand_id', 'turn_token', 'client_action_id', 'action'}
+    assert decision.last == dict(hand_id='h1', seat=2, street=0, active=6, covered=False, action='fold', amount=None)
+    record(None, type='ignored')
+    log = tmp_path / 'session.jsonl'
+    record(log, type='decision', **decision.last)
+    record(log, type='hand_result', seat=2, result=dict(payouts=[dict(seat=2, amount=30)]))
+    rows = [json.loads(line) for line in log.read_text().splitlines()]
+    assert [r['type'] for r in rows] == ['decision', 'hand_result'] and all(r['time'] > 0 for r in rows)
+    assert rows[1]['result']['payouts'][0]['amount'] == 30
