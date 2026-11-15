@@ -58,7 +58,7 @@ def summarize(solver):
         active23_new_positive_keys=len(keys),active23_owners=sorted(owners),active23_streets=sorted(streets),max_pointwise_weight_ratio=solver.max_ratio)
 
 
-def main(candidate,deadline,*,implementation=None,root=None,criteria=None,additional_sources=()):
+def main(candidate,deadline,*,implementation=None,root=None,criteria=None,additional_sources=(),candidate_label='stratified',batch_fn=None,summary_fn=None,gate_fn=None,batch_max_seconds=None,batch_node_limit=500000):
     if candidate not in (0,1) or not time.time()<deadline<=time.time()+2*3600:raise ValueError('candidate0/1 and finite deadline within2h required')
     root=ROOT if root is None else Path(root);criteria=CRITERIA if criteria is None else Path(criteria)
     root.mkdir(parents=True,exist_ok=True);output=root/f'candidate-{candidate}.json';parent=PARENTS[candidate]
@@ -66,15 +66,15 @@ def main(candidate,deadline,*,implementation=None,root=None,criteria=None,additi
         if output.exists() or output.with_suffix('.manifest.json').exists():raise ValueError('existing probe; investigate, never repeat unchanged')
         if available_memory()<5*1024**3 or shutil.disk_usage(root).free<10*1024**3:raise RuntimeError('stratified probe preflight reserve')
         files=[parent,*Path('poker').glob('*.py'),Path(__file__),criteria,Path('scripts/vector_variance.py'),Path('scripts/sustained_train.py'),Path('scripts/scaling_validation.py'),*additional_sources]
-        manifest=dict(candidate=candidate,deadline=deadline,deals=DEALS,replicates=REPLICATES,samples=8,components=[6,2],read_only=True,
+        manifest=dict(candidate=candidate,deadline=deadline,deals=DEALS,replicates=REPLICATES,samples=8,components=[6,2] if candidate_label=='stratified' else None,candidate_label=candidate_label,batch_max_seconds=batch_max_seconds,batch_node_limit=batch_node_limit,read_only=True,
             frozen={str(p):digest(p) for p in files});atomic_save(output.with_suffix('.manifest.json'),manifest)
-        started=time.monotonic();status='failed';error=None;minimum_available=available_memory()
+        started=time.monotonic();status='failed';error=None;minimum_available=available_memory();current_batch=None
         previous={s:signal.getsignal(s) for s in (signal.SIGALRM,signal.SIGTERM,signal.SIGINT)}
         def interrupted(signum,frame):raise TimeoutError('stratified probe deadline/interruption')
         for sig in previous:signal.signal(sig,interrupted)
         signal.setitimer(signal.ITIMER_REAL,max(.001,deadline-time.time()))
         try:
-            saved=load_checkpoint(parent);solvers={'baseline':Baseline(),'stratified':(Stratified if implementation is None else implementation)()}
+            saved=load_checkpoint(parent);solvers={'baseline':Baseline(),candidate_label:(Stratified if implementation is None else implementation)()}
             for s in solvers.values():s.regrets=saved['regrets'];s.setup(saved)
             fixtures=[];total_nodes={name:0 for name in solvers}
             for owner in range(6):
@@ -86,29 +86,32 @@ def main(candidate,deadline,*,implementation=None,root=None,criteria=None,additi
                             memory=available_memory();minimum_available=min(minimum_available,memory)
                             if memory<2*1024**3 or shutil.disk_usage(root).free<10*1024**3:raise RuntimeError('stratified probe host reserve breached')
                             if time.time()>=deadline:raise TimeoutError('stratified probe deadline reached')
-                            solver.rng=Random(10400000+candidate*1000000+owner*10000+n*100+trial);solver.sums={};solver.nodes=0;solver.node_limit=500000
-                            solver.deadline=time.monotonic()+deadline-time.time();batch(solver,state,owner,name=='stratified');estimator.add(solver.sums);nodes.append(solver.nodes)
+                            current_batch=dict(owner=owner,deal_seed=deal,variant=name,replicate=trial,node_limit=batch_node_limit,max_seconds=batch_max_seconds)
+                            solver.rng=Random(10400000+candidate*1000000+owner*10000+n*100+trial);solver.sums={};solver.nodes=0;solver.node_limit=batch_node_limit
+                            solver.deadline=time.monotonic()+min(deadline-time.time(),batch_max_seconds if batch_max_seconds is not None else deadline-time.time())
+                            (batch if batch_fn is None else batch_fn)(solver,state,owner,name==candidate_label);estimator.add(solver.sums);nodes.append(solver.nodes)
                         wall=time.monotonic()-start;var=estimator.trace();mean_nodes=statistics.mean(nodes)
                         fixture['variants'][name]=dict(variance_diagnostic_schema=SCHEMA,variance_trace=var,mean_nodes=mean_nodes,max_nodes=max(nodes),replicate_nodes=nodes,wall_seconds=wall,
                             variance_times_nodes=var*mean_nodes,variance_times_seconds=var*wall/REPLICATES)
                         total_nodes[name]+=sum(nodes)
                     fixtures.append(fixture)
                     atomic_save(output.with_suffix('.progress.json'),dict(time=time.time(),owner=owner,deal_index=n,completed_fixtures=len(fixtures),requested_fixtures=6*len(DEALS)))
-            verify(manifest);variants={name:summarize(s) for name,s in solvers.items()}
+            verify(manifest);variants={name:summarize(s) if summary_fn is None else summary_fn(s,name) for name,s in solvers.items()}
             aggregates={}
             for name in solvers:
                 aggregates[name]=dict(variance_times_nodes=math.fsum(f['variants'][name]['variance_times_nodes'] for f in fixtures),
                     variance_times_seconds=math.fsum(f['variants'][name]['variance_times_seconds'] for f in fixtures),total_nodes=total_nodes[name],
                     active23_updates_per_node=variants[name]['active23_postflop_updates']/total_nodes[name])
-            a=aggregates['baseline'];b=aggregates['stratified']
+            a=aggregates['baseline'];b=aggregates[candidate_label]
             ratio=lambda field:b[field]/a[field] if a[field]>0 else None
-            work=ratio('variance_times_nodes');wall=ratio('variance_times_seconds');visit=ratio('active23_updates_per_node');v=variants['stratified']
+            work=ratio('variance_times_nodes');wall=ratio('variance_times_seconds');visit=ratio('active23_updates_per_node');v=variants[candidate_label]
             gates=dict(variance_work_pass=work is not None and work<=1.5,variance_time_pass=wall is not None and wall<=2,
                 coverage_rate_pass=visit is not None and visit>=3,new_keys_roles_streets_pass=v['active23_new_positive_keys']>=20 and v['active23_owners']==list(range(6)) and v['active23_streets']==[1,2,3],
-                bounds_pass=v['max_pointwise_weight_ratio']<=4/3+1e-12 and all(z['max_nodes']<=10000 for f in fixtures for z in f['variants'].values()))
+                bounds_pass=(v.get('max_pointwise_weight_ratio',math.inf)<=4/3+1e-12) and all(z['max_nodes']<=10000 for f in fixtures for z in f['variants'].values()))
+            if gate_fn is not None:gates=gate_fn(gates,variants,fixtures)
             atomic_save(output,dict(status='completed',candidate=candidate,read_only=True,fixtures=fixtures,variants=variants,aggregates=aggregates,
                 variance_work_ratio=work,variance_time_ratio=wall,visit_rate_gain=visit,gates=gates,eligible_for_learning_pilot=all(gates.values()),
-                caveat='Fixed conditional engineering observations, not payoff evidence or independent ESS. Old randomized50/50MIS failure remains unchanged. Zero own-target reach is not repaired. All source learning bytes unchanged.'))
+                candidate_label=candidate_label,caveat='Fixed conditional engineering observations, not payoff evidence or independent ESS. Prior failed proposals remain unchanged. Zero own-target reach is not repaired. All source learning bytes unchanged.'))
             status='completed'
         except BaseException as exc:error=str(exc) or type(exc).__name__;raise
         finally:
@@ -118,7 +121,7 @@ def main(candidate,deadline,*,implementation=None,root=None,criteria=None,additi
             for line in Path('/proc/self/status').read_text().splitlines():
                 if line.startswith(('VmPeak:','VmHWM:')):
                     key,value,*_=line.split();fields[key.rstrip(':')]=int(value)*1024
-            atomic_save(output.with_suffix('.metrics.json'),dict(status=status,error=error,pid=os.getpid(),wall_seconds=time.monotonic()-started,
+            atomic_save(output.with_suffix('.metrics.json'),dict(status=status,error=error,last_batch=current_batch,pid=os.getpid(),wall_seconds=time.monotonic()-started,
                 peak_rss_bytes=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss*1024,address_space_limit_bytes=resource.getrlimit(resource.RLIMIT_AS)[0],minimum_available_bytes=minimum_available,**fields))
 
 
