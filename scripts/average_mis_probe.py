@@ -10,6 +10,7 @@ from poker.train_cfr import run_lock
 from poker.train import atomic_save
 from scripts.sustained_train import digest
 from scripts.scaling_validation import available_memory
+from scripts.vector_variance import VectorVariance,SCHEMA
 
 PROPOSAL='balanced-call-guarded-average-probe-v1'
 CRITERIA=Path('docs/AVERAGE-MIS-PROBE.md')
@@ -78,7 +79,7 @@ def main(output,deadline):
     if available_memory()<5*1024**3 or shutil.disk_usage(output.parent).free<10*1024**3:raise RuntimeError('probe memory/disk preflight reserve')
     with run_lock(output):
         if output.exists() or output.with_suffix('.manifest.json').exists():raise ValueError('existing probe; investigate rather than repeat')
-        files=[*PARENTS,*Path('poker').glob('*.py'),Path(__file__),CRITERIA,Path('scripts/sustained_train.py'),Path('scripts/scaling_validation.py')]
+        files=[*PARENTS,*Path('poker').glob('*.py'),Path(__file__),CRITERIA,Path('scripts/sustained_train.py'),Path('scripts/scaling_validation.py'),Path('scripts/vector_variance.py')]
         manifest=dict(proposal=PROPOSAL,deadline=deadline,deal_seeds=DEALS,replicates=REPLICATES,
             criteria=str(CRITERIA),frozen={str(p):digest(p) for p in files},read_only=True)
         atomic_save(output.with_suffix('.manifest.json'),manifest)
@@ -95,7 +96,7 @@ def main(output,deadline):
                     fixture=dict(candidate=i,deal_seed=deal,variants={});state=Holdem(deal,6,saved['abstraction']);owner=state.info()[0]
                     fixture['owner']=owner
                     for name,implementation in [('baseline',Probe),('mixture',BalancedAverage)]:
-                        solver=implementation();solver.regrets=saved['regrets'];norms=[];nodes=[];visits=[];totals={};max_weight=0.;max_ratio=0.;wall_start=time.monotonic()
+                        solver=implementation();solver.regrets=saved['regrets'];norms=[];nodes=[];visits=[];totals={};max_weight=0.;max_ratio=0.;variance_estimator=VectorVariance();wall_start=time.monotonic()
                         for trial in range(REPLICATES):
                             memory=available_memory();minimum_available=min(minimum_available,memory)
                             if memory<2*1024**3 or shutil.disk_usage(output.parent).free<10*1024**3:raise RuntimeError('probe host reserve breached')
@@ -103,6 +104,7 @@ def main(output,deadline):
                             solver.rng=Random(deal+trial*100+i);solver.nodes=0;solver.node_limit=500000;solver.deadline=time.monotonic()+deadline-time.time()
                             solver.sums={};solver.average_weight_moments={};solver.diagnostics.clear();solver.owner_postflop_active23=0;solver.max_weight_ratio=1.
                             solver.trajectory_average(state,owner)
+                            variance_estimator.add(solver.sums)
                             norms.append(math.fsum(x*x for row in solver.sums.values() for x in row));nodes.append(solver.nodes);visits.append(solver.owner_postflop_active23)
                             max_ratio=max(max_ratio,solver.max_weight_ratio)
                             max_weight=max(max_weight,max((v['maximum'] for v in solver.average_weight_moments.values()),default=0.))
@@ -110,8 +112,8 @@ def main(output,deadline):
                                 dest=totals.setdefault(key,[0.]*len(row))
                                 for j,x in enumerate(row):dest[j]+=x
                         wall=time.monotonic()-wall_start;normsum=math.fsum(norms);sumnorm=math.fsum(x*x for row in totals.values() for x in row)
-                        variance=max(0.,(normsum-sumnorm/REPLICATES)/(REPLICATES-1))
-                        fixture['variants'][name]=dict(variance_trace=variance,variance_times_nodes=variance*statistics.mean(nodes),variance_times_seconds=variance*wall/REPLICATES,
+                        variance=variance_estimator.trace()
+                        fixture['variants'][name]=dict(variance_diagnostic_schema=SCHEMA,variance_trace=variance,variance_times_nodes=variance*statistics.mean(nodes),variance_times_seconds=variance*wall/REPLICATES,
                             wall_seconds=wall,mean_nodes=statistics.mean(nodes),max_nodes=max(nodes),postflop_active23_visits=sum(visits),postflop_active23_per_node=sum(visits)/sum(nodes),
                             max_average_weight=max_weight,max_pointwise_weight_ratio=max_ratio,sum_squared_norms=normsum,squared_norm_of_vector_sum=sumnorm,
                             replicate_squared_norms=norms,replicate_nodes=nodes,replicate_postflop_active23_visits=visits,
