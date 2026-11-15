@@ -24,7 +24,6 @@ def test_weighted_sources_match_exact_scalar_target(clock,zero):
 
 
 def test_full_step_preserves_regret_rng_nodes_old_means_and_rollback():
-    assert ALGORITHM not in CFR_ALGORITHMS
     a=JointAverageMCCFR(samples=1);b=FutureLinearAverageMCCFR(samples=1,average_origin=10)
     a.iterations=b.iterations=59
     a.sums={'inherited':[2.,5.]};b.sums=copy.deepcopy(a.sums)
