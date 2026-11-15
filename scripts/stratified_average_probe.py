@@ -58,7 +58,7 @@ def summarize(solver):
         active23_new_positive_keys=len(keys),active23_owners=sorted(owners),active23_streets=sorted(streets),max_pointwise_weight_ratio=solver.max_ratio)
 
 
-def main(candidate,deadline,*,implementation=None,root=None,criteria=None,additional_sources=(),candidate_label='stratified',batch_fn=None,summary_fn=None,gate_fn=None,batch_max_seconds=None,batch_node_limit=500000):
+def main(candidate,deadline,*,implementation=None,baseline_implementation=None,root=None,criteria=None,additional_sources=(),candidate_label='stratified',batch_fn=None,summary_fn=None,gate_fn=None,batch_max_seconds=None,batch_node_limit=500000):
     if candidate not in (0,1) or not time.time()<deadline<=time.time()+2*3600:raise ValueError('candidate0/1 and finite deadline within2h required')
     root=ROOT if root is None else Path(root);criteria=CRITERIA if criteria is None else Path(criteria)
     root.mkdir(parents=True,exist_ok=True);output=root/f'candidate-{candidate}.json';parent=PARENTS[candidate]
@@ -74,7 +74,7 @@ def main(candidate,deadline,*,implementation=None,root=None,criteria=None,additi
         for sig in previous:signal.signal(sig,interrupted)
         signal.setitimer(signal.ITIMER_REAL,max(.001,deadline-time.time()))
         try:
-            saved=load_checkpoint(parent);solvers={'baseline':Baseline(),candidate_label:(Stratified if implementation is None else implementation)()}
+            saved=load_checkpoint(parent);solvers={'baseline':(Baseline if baseline_implementation is None else baseline_implementation)(),candidate_label:(Stratified if implementation is None else implementation)()}
             for s in solvers.values():s.regrets=saved['regrets'];s.setup(saved)
             fixtures=[];total_nodes={name:0 for name in solvers}
             for owner in range(6):

@@ -2,6 +2,8 @@ import json,time
 from pathlib import Path
 from types import SimpleNamespace
 import pytest
+from dataclasses import replace
+from poker.game import Game
 from poker.cfr import TraversalLimit
 from poker.train_cfr import train
 from scripts import adaptive_average_probe as a
@@ -17,6 +19,18 @@ def setup(tmp_path,monkeypatch):
 
 def test_custom_candidate_uses_actual_cap_gate_and_preserves_parent(tmp_path,monkeypatch):
     parent=setup(tmp_path,monkeypatch);before=parent.read_bytes();root=tmp_path/'root'
+    # Exercise the output/gate interface on a deterministic six-role tree.
+    # Real-poker feasibility is a separately bounded experiment, not an assumption
+    # that arbitrary uniform policies finish adaptive enumeration cheaply.
+    observation=Game(1).observe()
+    class Tiny:
+        def __init__(self,depth=0):
+            self.depth=depth
+            self.game=SimpleNamespace(observe=lambda:replace(observation,player=self.depth,position=self.depth,legal=('call',),street=1))
+        def terminal(self):return self.depth==6
+        def info(self):return self.depth,'tiny:'+str(self.depth),('call',)
+        def child(self,a):return Tiny(self.depth+1)
+    monkeypatch.setattr(d,'Holdem',lambda *args:Tiny())
     d.main(0,time.time()+60,implementation=a.ObservedAdaptive,root=root,criteria=a.CRITERIA,additional_sources=[Path(a.__file__)],candidate_label='adaptive',batch_fn=a.batch,summary_fn=a.summarize,gate_fn=a.gates,batch_max_seconds=2.,batch_node_limit=10000)
     r=json.loads((root/'candidate-0.json').read_text());v=r['variants']['adaptive']
     assert parent.read_bytes()==before and r['candidate_label']=='adaptive'
