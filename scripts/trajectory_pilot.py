@@ -26,6 +26,10 @@ ADDITIONAL_SOURCES=[]
 POPULATION=None
 FORK_FLAG='--fork-traversal'
 REQUIRE_TIGHT_IMPROVEMENT=False
+# Optional fixed coverage-reference checkpoints (one per learner). When set, the
+# tight +2pp gain is measured against these on the same confirmation deals and
+# the immediate parent only has to show no tight-coverage decline.
+COVERAGE_REFERENCES=None
 
 
 def recipe(saved):
@@ -84,17 +88,30 @@ def tight_coverage_improvement(candidate,baseline):
                 passed=after['decisions']>=200 and after['fraction']>=.05 and gain>=.02-1e-12)
 
 
+def fixed_reference_tight_coverage(candidate,reference,parent):
+    after=candidate['tight'];fixed=reference['tight'];before=parent['tight']
+    gain=after['fraction']-fixed['fraction'];change=after['fraction']-before['fraction']
+    return dict(candidate=after,reference=fixed,parent=before,percentage_point_gain=100*gain,
+                percentage_point_change_vs_parent=100*change,
+                required_min_fraction=.05,required_min_decisions=200,required_percentage_point_gain=2.,
+                required_percentage_point_change_vs_parent=0.,
+                passed=after['decisions']>=200 and after['fraction']>=.05 and gain>=.02-1e-12 and change>=-1e-12)
+
+
 def main(deadline,resume=False):
     deadline=datetime.fromisoformat(deadline)
     if deadline.tzinfo is None or not time.time()<deadline.timestamp()<=time.time()+12*3600:raise ValueError('finite invocation deadline within12h required')
     ROOT.mkdir(parents=True,exist_ok=True);workers.ROOT=ROOT
     with run_lock(ROOT/'supervisor'):
-        inputs=[*PARENTS,VALIDATION,*ROBUSTNESS]
+        inputs=[*PARENTS,VALIDATION,*ROBUSTNESS,*(COVERAGE_REFERENCES or [])]
         manifest=dict(algorithm=ALGORITHM,recipe=POPULATION,parents=[str(p) for p in PARENTS],additions=ADDITIONS,samples=8,
             deadline=deadline.isoformat(),screen_seed=SCREEN_SEED,screen_blocks=200,confirm_seed=CONFIRM_SEED,confirm_blocks=2000,
             inputs=[dict(path=str(p.resolve()),sha256=digest(p)) for p in inputs],
             criteria=str(CRITERIA),criteria_sha256=digest(CRITERIA),
             sources={str(p):digest(p) for p in [*sorted(Path('poker').glob('*.py')),Path(__file__),Path(workers.__file__),Path('scripts/limited_worker.py'),Path('scripts/sustained_train.py'),*ADDITIONAL_SOURCES]})
+        if COVERAGE_REFERENCES is not None:
+            if len(COVERAGE_REFERENCES)!=len(PARENTS) or not REQUIRE_TIGHT_IMPROVEMENT:raise ValueError('one fixed coverage reference per learner required')
+            manifest['coverage_references']=[str(p) for p in COVERAGE_REFERENCES]
         path=ROOT/'manifest.json'
         if path.exists():
             if not resume or json.loads(path.read_text())!=manifest:raise ValueError('existing/mismatched pilot manifest')
@@ -149,7 +166,9 @@ def main(deadline,resume=False):
             verify(manifest);requests=[];last=ADDITIONS[-1]
             for i,parent in enumerate(PARENTS):
                 for population,opponent in [('validation',VALIDATION),('independent',ROBUSTNESS[i])]:
-                    for kind,checkpoint in [('candidate',ROOT/f'candidate-{i}-plus-{last}.json'),('baseline',parent),('uniform',ROOT/f'candidate-{i}-plus-{last}.json')]:
+                    kinds=[('candidate',ROOT/f'candidate-{i}-plus-{last}.json'),('baseline',parent),('uniform',ROOT/f'candidate-{i}-plus-{last}.json')]
+                    if COVERAGE_REFERENCES is not None:kinds.append(('reference',COVERAGE_REFERENCES[i]))
+                    for kind,checkpoint in kinds:
                         requests.append(dict(checkpoint=checkpoint,opponent=opponent,uniform=kind=='uniform',output=ROOT/f'candidate-{i}-{population}-{kind}.json'))
             atomic_save(ROOT/'status.json',dict(status='confirmation'))
             evaluate_requests(requests,deadline.timestamp(),CONFIRM_SEED,2000)
@@ -164,7 +183,11 @@ def main(deadline,resume=False):
                         coverage_pass=all(row['decisions']>=200 and row['fraction']>=.05 for pop,row in cov.items() if pop in ('calling','mixed',key)),
                         material_regression=any(v['interval'][1]<-10 for v in pair.values()))
                     if REQUIRE_TIGHT_IMPROVEMENT:
-                        improvement=tight_coverage_improvement(cov,coverage(b))
+                        if COVERAGE_REFERENCES is None:improvement=tight_coverage_improvement(cov,coverage(b))
+                        else:
+                            r=json.loads((ROOT/f'candidate-{i}-{population}-reference.json').read_text())
+                            if r['opponent_checkpoint_hashes']!=c['opponent_checkpoint_hashes'] or r.get('seed')!=c.get('seed'):raise ValueError('coverage reference evaluated on different opponents/deals')
+                            improvement=fixed_reference_tight_coverage(cov,coverage(r),coverage(b))
                         final[str(i)][population]['tight_coverage_improvement']=improvement
                         final[str(i)][population]['coverage_pass'] &= improvement['passed']
             atomic_save(ROOT/'learning-evidence.json',final)

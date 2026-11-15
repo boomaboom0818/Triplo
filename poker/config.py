@@ -2,9 +2,10 @@
 import json
 import math
 from .future_linear_contract import validate as validate_future
+from .coverage_reuse_contract import validate as validate_coverage,ALGORITHM as COVERAGE_ALGORITHM,TRAVERSAL as COVERAGE_TRAVERSAL,AVERAGING as COVERAGE_AVERAGING
 from pathlib import Path
 
-CFR_ALGORITHMS=('external-sampling-mccfr-v1','outcome-sampling-mccfr-v2','prefix-outcome-mccfr-v3','joint-traversal-average-mccfr-v7','future-linear-average-mccfr-v8')
+CFR_ALGORITHMS=('external-sampling-mccfr-v1','outcome-sampling-mccfr-v2','prefix-outcome-mccfr-v3','joint-traversal-average-mccfr-v7','future-linear-average-mccfr-v8',COVERAGE_ALGORITHM)
 
 
 def load_config(path):
@@ -30,18 +31,20 @@ def load_checkpoint(path, *, model_id=None):
                 or checkpoint.get('config', {}).get('players') != 6):
             raise ValueError('evaluation requires a six-player holdem CFR checkpoint')
         cfg=checkpoint['config']
-        if checkpoint['algorithm'] in ('outcome-sampling-mccfr-v2','prefix-outcome-mccfr-v3','joint-traversal-average-mccfr-v7','future-linear-average-mccfr-v8'):
+        if checkpoint['algorithm'] in ('outcome-sampling-mccfr-v2','prefix-outcome-mccfr-v3','joint-traversal-average-mccfr-v7','future-linear-average-mccfr-v8',COVERAGE_ALGORITHM):
             samples=cfg.get('trajectory_samples')
             future=checkpoint['algorithm']=='future-linear-average-mccfr-v8'
             joint=checkpoint['algorithm']=='joint-traversal-average-mccfr-v7'
-            expected='future-linear-average-v8' if future else 'joint-average-v7' if joint else 'prefix-v3' if checkpoint['algorithm']=='prefix-outcome-mccfr-v3' else 'trajectory-v2'
-            sampler='future-linear-joint-average-v8' if future else 'regret-path-mis-average-v7' if joint else 'trajectory-call-mixture-v2'
+            coverage=checkpoint['algorithm']==COVERAGE_ALGORITHM
+            expected=COVERAGE_TRAVERSAL if coverage else 'future-linear-average-v8' if future else 'joint-average-v7' if joint else 'prefix-v3' if checkpoint['algorithm']=='prefix-outcome-mccfr-v3' else 'trajectory-v2'
+            sampler=COVERAGE_AVERAGING if coverage else 'future-linear-joint-average-v8' if future else 'regret-path-mis-average-v7' if joint else 'trajectory-call-mixture-v2'
             if (cfg.get('traversal')!=expected or cfg.get('averaging_sampler')!=sampler
                     or type(samples) is not int or not 1<=samples<=64):
                 raise ValueError('invalid trajectory checkpoint metadata')
-            if expected in ('prefix-v3','joint-average-v7','future-linear-average-v8') and (type(cfg.get('regret_prefix_depth')) is not int or cfg['regret_prefix_depth'] not in (1,2)):
+            if expected in ('prefix-v3','joint-average-v7','future-linear-average-v8',COVERAGE_TRAVERSAL) and (type(cfg.get('regret_prefix_depth')) is not int or cfg['regret_prefix_depth'] not in (1,2)):
                 raise ValueError('invalid prefix checkpoint metadata')
             if future:validate_future(checkpoint)
+            if coverage:validate_coverage(checkpoint)
             if joint:
                 start=checkpoint.get('joint_average_diagnostics_started_at');iterations=checkpoint.get('iterations')
                 stats=checkpoint.get('traversal_stats',{})

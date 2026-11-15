@@ -53,7 +53,7 @@ def test_six_role_step_preserves_covered_updates_regrets_rng_nodes_and_old_learn
         if any(row):assert b.sums[key]==a.sums[key]
         assert all(after>=old for after,old in zip(b.sums[key],row))
     assert b.diagnostics['coverage-reuse-v10:covered-foreign-omitted']>0
-    assert ALGORITHM not in CFR_ALGORITHMS
+    assert ALGORITHM in CFR_ALGORITHMS  # registered after the amended confirmation passed
     fields=('regrets','sums','iterations','nodes','diagnostics','traversal_stats','average_origin','epoch_weight_moments')
     snapshot=copy.deepcopy({k:getattr(b,k) for k in fields});rng=b.rng.getstate()
     with pytest.raises(TraversalLimit):b.step(factory,6,max_nodes=1)
