@@ -13,7 +13,7 @@ from scripts.scaling_validation import available_memory
 from scripts.sustained_train import digest
 import shutil
 
-ROOT=Path('runs/bot/future-linear-probe-001')
+ROOT=Path('runs/bot/future-linear-probe-002')
 PARENTS=[Path(f'runs/bot/joint-average-training-001/candidate-{i}-plus-2000.json') for i in range(2)]
 CRITERIA=Path('docs/FUTURE-LINEAR-AVERAGING.md')
 DEALS=list(range(11300000,11300004))
@@ -28,6 +28,16 @@ class ObserveWeight:
 
 class Baseline(ObserveWeight,JointAverageMCCFR):pass
 class Candidate(ObserveWeight,FutureLinearAverageMCCFR):pass
+
+
+def maximum_average_weight(solver):
+    # Lifetime average moments use street= keys; epoch moments use average:.
+    rows=solver.average_weight_moments
+    if any(not key.startswith('street=') for key in rows):raise ValueError('unexpected average moment schema')
+    maximum=max((row['maximum'] for row in rows.values()),default=0.)
+    if bool(maximum>0)!=any(any(v>0 for v in row) for row in solver.sums.values()):
+        raise ValueError('average peak instrumentation disagrees with actual contributions')
+    return maximum
 
 
 def selected(saved,seed):
@@ -94,7 +104,7 @@ def main(candidate,deadline):
                                 assert all(math.isclose(v*clock,w,rel_tol=1e-12,abs_tol=1e-12) for v,w in zip(row,b.sums[key]))
                             signature=hashlib.sha256(json.dumps(dict(regrets=deltas[0],rng=a.rng.getstate(),nodes=a.nodes),sort_keys=True).encode()).hexdigest()
                             max_ratio=max(max_ratio,getattr(b,'max_ratio',0.))
-                            rawmax=max((r['maximum'] for k,r in b.average_weight_moments.items() if k.startswith('average:')),default=0.)
+                            rawmax=maximum_average_weight(b)
                             max_weights[str(clock)]=max(max_weights[str(clock)],rawmax)
                             for key,value in b.diagnostics.items():
                                 if key.startswith('joint-average-v7:source='):
@@ -107,7 +117,7 @@ def main(candidate,deadline):
             assert len(cases)==288
             gates=dict(exact_regret_rng_nodes=True,exact_weighted_target=True,exact_source_counts=True,
                 bounded_batch=max_nodes<=10000,normalized_defensive_bound=max_ratio<=1+1e-12,
-                time_ratio=times[1]<=2*times[0],finite_weights=all(math.isfinite(v*v) for v in max_weights.values()))
+                time_ratio=times[1]<=2*times[0],finite_weights=all(v>0 and math.isfinite(v*v) for v in max_weights.values()))
             atomic_save(out,dict(candidate=candidate,read_only=True,inputs=manifest['frozen'],cases=cases,gates=gates,
                 eligible_for_registration=all(gates.values()),total_seconds=times,time_ratio=times[1]/times[0],
                 max_normalized_pointwise_ratio=max_ratio,max_raw_weight_by_clock=max_weights,source_groups_by_clock=total_sources,

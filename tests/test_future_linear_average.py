@@ -51,3 +51,11 @@ def test_clock_rejects_invalid_boundary_and_split_steps_are_exact():
     b.step(factory,3);b=copy.deepcopy(b);b.step(factory,3)
     assert a.sums==b.sums and a.regrets==b.regrets and a.rng.getstate()==b.rng.getstate()
     assert a.average_multiplier==b.average_multiplier==3
+
+
+def test_engineering_peak_uses_actual_lifetime_moment_schema():
+    from scripts.future_linear_probe import Candidate,batch,maximum_average_weight
+    s=Candidate(samples=8);s.iterations=1999
+    batch(s,Holdem(11300000,6,'texture-buckets-v2'),0)
+    assert s.average_weight_moments and all(k.startswith('street=') for k in s.average_weight_moments)
+    assert maximum_average_weight(s)==max(row['maximum'] for row in s.average_weight_moments.values())>0
