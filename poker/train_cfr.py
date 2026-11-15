@@ -16,6 +16,7 @@ from pathlib import Path
 from .cfr import MCCFR,Kuhn,Holdem,TraversalLimit
 from .trajectory import TrajectoryMCCFR,ALGORITHM as TRAJECTORY_ALGORITHM,AVERAGING as TRAJECTORY_AVERAGING,fork_allowed
 from .prefix import PrefixMCCFR,ALGORITHM as PREFIX_ALGORITHM,fork_allowed as prefix_fork_allowed
+from .joint_average import JointAverageMCCFR,ALGORITHM as JOINT_ALGORITHM,AVERAGING as JOINT_AVERAGING,fork_allowed as joint_fork_allowed
 from .train import atomic_save,tuples
 
 _STOP_REQUESTED=False
@@ -58,14 +59,15 @@ def _train(iterations,path,seed,game,players,resume,checkpoint_every,
                 archive_every=archive_every,archive_size=archive_size)
     if Path(path).exists() and (resume is None or Path(path).resolve()!=Path(resume).resolve()):
         raise ValueError('output exists; use resume or a new path')
-    if traversal not in ('external-v1','trajectory-v2','prefix-v3'):raise ValueError('unsupported traversal')
-    algorithm={'external-v1':'external-sampling-mccfr-v1','trajectory-v2':TRAJECTORY_ALGORITHM,'prefix-v3':PREFIX_ALGORITHM}[traversal]
-    if averaging_sampler not in ("uniform","call-mixture-v1",TRAJECTORY_AVERAGING):raise ValueError("unsupported averaging sampler")
-    if (traversal!='external-v1')!=(averaging_sampler==TRAJECTORY_AVERAGING):raise ValueError('traversal/averaging version mismatch')
+    if traversal not in ('external-v1','trajectory-v2','prefix-v3','joint-average-v7'):raise ValueError('unsupported traversal')
+    algorithm={'external-v1':'external-sampling-mccfr-v1','trajectory-v2':TRAJECTORY_ALGORITHM,'prefix-v3':PREFIX_ALGORITHM,'joint-average-v7':JOINT_ALGORITHM}[traversal]
+    if averaging_sampler not in ("uniform","call-mixture-v1",TRAJECTORY_AVERAGING,JOINT_AVERAGING):raise ValueError("unsupported averaging sampler")
+    allowed={'external-v1':('uniform','call-mixture-v1'),'trajectory-v2':(TRAJECTORY_AVERAGING,),'prefix-v3':(TRAJECTORY_AVERAGING,),'joint-average-v7':(JOINT_AVERAGING,)}
+    if averaging_sampler not in allowed[traversal]:raise ValueError('traversal/averaging version mismatch')
     if traversal!='external-v1':
         if type(trajectory_samples) is not int or not 1<=trajectory_samples<=64:raise ValueError('invalid trajectory sample count')
         config.update(traversal=traversal,trajectory_samples=trajectory_samples)
-    if traversal=='prefix-v3':
+    if traversal in ('prefix-v3','joint-average-v7'):
         if type(regret_prefix_depth) is not int or regret_prefix_depth not in (1,2):raise ValueError('invalid regret prefix depth')
         config['regret_prefix_depth']=regret_prefix_depth
     if averaging_sampler!="uniform":config["averaging_sampler"]=averaging_sampler
@@ -78,7 +80,7 @@ def _train(iterations,path,seed,game,players,resume,checkpoint_every,
     if fork_traversal and (fork_population or not resume or Path(path).resolve()==Path(resume).resolve()):
         raise ValueError('traversal fork requires a new output, explicit parent and no population change')
     recipe_fork=None
-    solver=PrefixMCCFR(seed,trajectory_samples,regret_prefix_depth) if traversal=='prefix-v3' else TrajectoryMCCFR(seed,trajectory_samples) if traversal=='trajectory-v2' else MCCFR(seed)
+    solver=JointAverageMCCFR(seed,trajectory_samples,regret_prefix_depth) if traversal=='joint-average-v7' else PrefixMCCFR(seed,trajectory_samples,regret_prefix_depth) if traversal=='prefix-v3' else TrajectoryMCCFR(seed,trajectory_samples) if traversal=='trajectory-v2' else MCCFR(seed)
     solver.averaging_sampler=averaging_sampler;seconds=0;archive=[]
     solver.stop_requested=lambda: _STOP_REQUESTED
     if resume:
@@ -89,20 +91,26 @@ def _train(iterations,path,seed,game,players,resume,checkpoint_every,
             compatible=population_fork_allowed(saved.get('config',{}),config)
             if compatible:recipe_fork=dict(parent_sha256=hashlib.sha256(Path(resume).read_bytes()).hexdigest(),parent_algorithm=saved['algorithm'],parent_config=saved['config'],iterations=saved['iterations'],kind='explicit population fork',previous_recipe_fork=saved.get('recipe_fork'))
         elif fork_traversal:
-            compatible=(traversal=='trajectory-v2' and saved.get('algorithm')=='external-sampling-mccfr-v1' and fork_allowed(saved.get('config',{}),config)) or (traversal=='prefix-v3' and saved.get('algorithm')==TRAJECTORY_ALGORITHM and prefix_fork_allowed(saved.get('config',{}),config))
+            compatible=(traversal=='trajectory-v2' and saved.get('algorithm')=='external-sampling-mccfr-v1' and fork_allowed(saved.get('config',{}),config)) or (traversal=='prefix-v3' and saved.get('algorithm')==TRAJECTORY_ALGORITHM and prefix_fork_allowed(saved.get('config',{}),config)) or (traversal=='joint-average-v7' and saved.get('algorithm')==PREFIX_ALGORITHM and joint_fork_allowed(saved.get('config',{}),config))
             if compatible:recipe_fork=dict(parent_sha256=hashlib.sha256(Path(resume).read_bytes()).hexdigest(),parent_algorithm=saved['algorithm'],parent_config=saved['config'],iterations=saved['iterations'],kind=f'explicit {traversal} fork',previous_recipe_fork=saved.get('recipe_fork'))
         else:recipe_fork=saved.get('recipe_fork')
-        expected_algorithm=TRAJECTORY_ALGORITHM if fork_traversal and traversal=='prefix-v3' else 'external-sampling-mccfr-v1' if fork_traversal else algorithm
+        expected_algorithm=PREFIX_ALGORITHM if fork_traversal and traversal=='joint-average-v7' else TRAJECTORY_ALGORITHM if fork_traversal and traversal=='prefix-v3' else 'external-sampling-mccfr-v1' if fork_traversal else algorithm
         if (saved.get('schema')!=1 or saved.get('algorithm')!=expected_algorithm
                 or not compatible or saved.get('model_id')!='bot-opponent-v1'):
             raise ValueError('incompatible CFR checkpoint')
+        if traversal=='joint-average-v7' and not fork_traversal:
+            boundary=saved.get('joint_average_diagnostics_started_at')
+            stats=saved.get('traversal_stats',{});ratio=stats.get('max_joint_average_to_original_weight_ratio') if isinstance(stats,dict) else None
+            if (saved.get('average_estimator_schema')!='joint-inclusion-v7' or type(boundary) is not int or type(saved.get('iterations')) is not int or not 0<=boundary<=saved['iterations']
+                    or type(ratio) not in (int,float) or not math.isfinite(ratio) or not 0<=ratio<=1+1e-12):
+                raise ValueError('incompatible joint averaging diagnostics')
         solver.regrets=saved['regrets'];solver.sums=saved['sums'];archive=saved['archive']
         solver.rng.setstate(tuples(saved['rng']));solver.iterations=saved['iterations']
         solver.nodes=saved['nodes'];seconds=saved['seconds']
         solver.diagnostics.update(saved.get('diagnostics',{}))
         solver.average_weight_moments=saved.get('average_weight_moments',{})
         if traversal!='external-v1' and not (fork_traversal or fork_population) and 'traversal_stats' in saved:solver.traversal_stats=saved['traversal_stats']
-        if traversal=='prefix-v3' and not (fork_traversal or fork_population):solver.epoch_weight_moments=saved.get('epoch_weight_moments',{})
+        if traversal in ('prefix-v3','joint-average-v7') and not (fork_traversal or fork_population):solver.epoch_weight_moments=saved.get('epoch_weight_moments',{})
     if iterations<=solver.iterations:raise ValueError('target must exceed completed iterations')
     try:revision=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
     except (OSError,subprocess.CalledProcessError):revision='unknown'
@@ -124,7 +132,9 @@ def _train(iterations,path,seed,game,players,resume,checkpoint_every,
         if traversal!='external-v1':
             result.update(traversal_stats=solver.traversal_stats,traversal_stats_started_at=(saved['iterations'] if fork_traversal or fork_population else saved.get('traversal_stats_started_at',saved['iterations'])) if resume else 0)
             result.update(sampling_diagnostics_schema='actual-actions-v2',sampling_diagnostics_started_at=saved.get('sampling_diagnostics_started_at',saved['iterations']) if resume else 0)
-        if traversal=='prefix-v3':result['epoch_weight_moments']=solver.epoch_weight_moments
+        if traversal in ('prefix-v3','joint-average-v7'):result['epoch_weight_moments']=solver.epoch_weight_moments
+        if traversal=='joint-average-v7':
+            result.update(average_estimator_schema='joint-inclusion-v7',joint_average_diagnostics_started_at=(saved['iterations'] if fork_traversal else saved.get('joint_average_diagnostics_started_at',saved['iterations'])) if resume else 0)
         # Keep the last complete checkpoint as recovery if replacement/disk write fails.
         if Path(path).exists():
             shutil.copyfile(path,str(path)+'.previous.tmp')
@@ -188,10 +198,10 @@ if __name__=='__main__':
     p.add_argument('--population-probability',type=float,default=0.0)
     p.add_argument('--archive-every',type=int,default=100)
     p.add_argument('--archive-size',type=int,default=4)
-    p.add_argument('--averaging-sampler',choices=['uniform','call-mixture-v1',TRAJECTORY_AVERAGING],default='uniform')
+    p.add_argument('--averaging-sampler',choices=['uniform','call-mixture-v1',TRAJECTORY_AVERAGING,JOINT_AVERAGING],default='uniform')
     p.add_argument('--opponent-population',choices=['historical-v1','diverse-v1','guarded-tables-v2'],default='historical-v1')
     p.add_argument('--fork-population',action='store_true')
-    p.add_argument('--traversal',choices=['external-v1','trajectory-v2','prefix-v3'],default='external-v1')
+    p.add_argument('--traversal',choices=['external-v1','trajectory-v2','prefix-v3','joint-average-v7'],default='external-v1')
     p.add_argument('--trajectory-samples',type=int,default=8)
     p.add_argument('--regret-prefix-depth',type=int,default=2)
     p.add_argument('--fork-traversal',action='store_true')

@@ -38,7 +38,7 @@ def configure():
     driver.POPULATION='guarded-tables-v2';driver.FORK_FLAG='--fork-traversal';driver.REQUIRE_TIGHT_IMPROVEMENT=True
     driver.fork_allowed=fork_allowed;driver.CRITERIA=Path('docs/JOINT-AVERAGING-PILOT.md')
     driver.SCREEN_SEED=10200000;driver.CONFIRM_SEED=10300000;driver.stage_config=stage_config
-    driver.ADDITIONAL_SOURCES=[Path(__file__),ENGINEERING,RUNTIME]
+    driver.ADDITIONAL_SOURCES=[Path(__file__),ENGINEERING,RUNTIME,Path('configs/bot.json')]
 
 
 if __name__=='__main__':
