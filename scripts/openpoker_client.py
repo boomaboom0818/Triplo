@@ -62,8 +62,17 @@ def decision(snapshot, policy):
     hole = tuple(hero['hole_cards'])
     if len(hole) != 2:
         raise ValueError('missing private cards')
-    observation = Observation(position, position, hole, board,
-        tuple(unit(s['stack']) for s in seats), tuple(not s['folded'] for s in seats),
+    stacks = tuple(unit(s['stack']) for s in seats)
+    active = tuple(not s['folded'] for s in seats)
+    # Training is 6-max only. A short-handed table is the same game as 6-max after
+    # the earliest non-blind seats fold, so present it that way to the policy.
+    pad = 6 - len(seats)
+    if pad:
+        stacks = stacks[:2] + (200,) * pad + stacks[2:]
+        active = active[:2] + (False,) * pad + active[2:]
+        if position >= 2:
+            position += pad
+    observation = Observation(position, position, hole, board, stacks, active,
         pot, unit(offered.get('call', {}).get('amount', 0)), street, tuple(legal), ())
     key = information_key(observation, policy.abstraction)
     row = policy.sums.get(key)

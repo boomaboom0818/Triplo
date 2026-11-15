@@ -72,3 +72,32 @@ def test_session_log_records_diagnostics_without_changing_wire_payload(tmp_path)
     rows = [json.loads(line) for line in log.read_text().splitlines()]
     assert [r['type'] for r in rows] == ['decision', 'hand_result'] and all(r['time'] > 0 for r in rows)
     assert rows[1]['result']['payouts'][0]['amount'] == 30
+
+
+def test_short_handed_table_maps_to_six_max_with_early_seats_folded():
+    from poker.cfr import information_key
+    from poker.game import Game
+    seen = []
+    class Policy:
+        abstraction = 'texture-buckets-v2'
+        class Rows:
+            def get(self, key): seen.append(key); return [1]
+        sums = Rows()
+        def act(self, o): seen.append(o); return 'call'
+    s = snapshot()
+    # Five-handed: seat 2 is absent, dealer 5, hero seat 3 is first to act.
+    s['seats'] = [x for x in s['seats'] if x['seat'] != 2]
+    s['actor_seat'] = s['hero']['seat'] = 3
+    decision(s, Policy())
+    key, o = seen
+    assert o.position == 3 and o.active == (True, True, False, True, True, True) and len(o.stacks) == 6
+    # Identical information set to the trained 6-max state after one early fold.
+    game = Game(1); game.act('fold')
+    trained = game.observe()
+    assert trained.position == 3
+    import dataclasses
+    assert key == information_key(dataclasses.replace(trained, hole=('Ah', 'Kd')), 'texture-buckets-v2')
+    # Blinds keep their positions.
+    s['actor_seat'] = s['hero']['seat'] = 0
+    seen.clear(); decision(s, Policy())
+    assert seen[1].position == 0
