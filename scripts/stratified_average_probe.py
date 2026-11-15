@@ -58,13 +58,14 @@ def summarize(solver):
         active23_new_positive_keys=len(keys),active23_owners=sorted(owners),active23_streets=sorted(streets),max_pointwise_weight_ratio=solver.max_ratio)
 
 
-def main(candidate,deadline):
+def main(candidate,deadline,*,implementation=None,root=None,criteria=None,additional_sources=()):
     if candidate not in (0,1) or not time.time()<deadline<=time.time()+2*3600:raise ValueError('candidate0/1 and finite deadline within2h required')
-    ROOT.mkdir(parents=True,exist_ok=True);output=ROOT/f'candidate-{candidate}.json';parent=PARENTS[candidate]
+    root=ROOT if root is None else Path(root);criteria=CRITERIA if criteria is None else Path(criteria)
+    root.mkdir(parents=True,exist_ok=True);output=root/f'candidate-{candidate}.json';parent=PARENTS[candidate]
     with run_lock(output):
         if output.exists() or output.with_suffix('.manifest.json').exists():raise ValueError('existing probe; investigate, never repeat unchanged')
-        if available_memory()<5*1024**3 or shutil.disk_usage(ROOT).free<10*1024**3:raise RuntimeError('stratified probe preflight reserve')
-        files=[parent,*Path('poker').glob('*.py'),Path(__file__),CRITERIA,Path('scripts/vector_variance.py'),Path('scripts/sustained_train.py'),Path('scripts/scaling_validation.py')]
+        if available_memory()<5*1024**3 or shutil.disk_usage(root).free<10*1024**3:raise RuntimeError('stratified probe preflight reserve')
+        files=[parent,*Path('poker').glob('*.py'),Path(__file__),criteria,Path('scripts/vector_variance.py'),Path('scripts/sustained_train.py'),Path('scripts/scaling_validation.py'),*additional_sources]
         manifest=dict(candidate=candidate,deadline=deadline,deals=DEALS,replicates=REPLICATES,samples=8,components=[6,2],read_only=True,
             frozen={str(p):digest(p) for p in files});atomic_save(output.with_suffix('.manifest.json'),manifest)
         started=time.monotonic();status='failed';error=None;minimum_available=available_memory()
@@ -73,7 +74,7 @@ def main(candidate,deadline):
         for sig in previous:signal.signal(sig,interrupted)
         signal.setitimer(signal.ITIMER_REAL,max(.001,deadline-time.time()))
         try:
-            saved=load_checkpoint(parent);solvers={'baseline':Baseline(),'stratified':Stratified()}
+            saved=load_checkpoint(parent);solvers={'baseline':Baseline(),'stratified':(Stratified if implementation is None else implementation)()}
             for s in solvers.values():s.regrets=saved['regrets'];s.setup(saved)
             fixtures=[];total_nodes={name:0 for name in solvers}
             for owner in range(6):
@@ -83,7 +84,7 @@ def main(candidate,deadline):
                         estimator=VectorVariance();nodes=[];start=time.monotonic()
                         for trial in range(REPLICATES):
                             memory=available_memory();minimum_available=min(minimum_available,memory)
-                            if memory<2*1024**3 or shutil.disk_usage(ROOT).free<10*1024**3:raise RuntimeError('stratified probe host reserve breached')
+                            if memory<2*1024**3 or shutil.disk_usage(root).free<10*1024**3:raise RuntimeError('stratified probe host reserve breached')
                             if time.time()>=deadline:raise TimeoutError('stratified probe deadline reached')
                             solver.rng=Random(10400000+candidate*1000000+owner*10000+n*100+trial);solver.sums={};solver.nodes=0;solver.node_limit=500000
                             solver.deadline=time.monotonic()+deadline-time.time();batch(solver,state,owner,name=='stratified');estimator.add(solver.sums);nodes.append(solver.nodes)
