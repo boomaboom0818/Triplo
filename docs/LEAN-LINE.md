@@ -14,10 +14,17 @@ carry over; old runs stay preserved.
 | Trainer | `scripts/lean_train.py` | Single writer, 4 GiB limit, finite deadline, atomic checkpoints, row and host-reserve guards. |
 | Gate | `scripts/rule_gate.py` | Lean checkpoints are gated on the fast engine with the lean menu. |
 
-Measured on this host: about 55 iterations per second (old trainer: 0.46).
+| Multi-core | `poker/lean_parallel.py` | Forked workers traverse against tables frozen for the round and return deltas. Deterministic for a given seed, worker count and batch schedule. |
+| Player | `poker.lean_cfr.LeanPolicy` | Samples the average strategy; unseen states (for example a 100bb all-in) are played by the fixed `tight-v1` rule player. |
+| Live adapter | `scripts/openpoker_client.py` | Builds the lean menu and `lean-v3` keys for lean checkpoints; short-handed tables map to 6-max with early seats folded. |
 
-Known gaps, in priority order:
-1. The live adapter still builds the old menu and old keys; it must mirror the lean menu and `lean-v3` before any lean checkpoint plays live.
-2. Opponents can shove at any stack depth; the trained game has no such node, so those states fall back to check/fold.
-3. Single core. Twelve are available.
-4. No multiplayer equilibrium guarantee; strength is judged only by play against opponents.
+Measured on this host (6 physical cores): about 55 iterations per second on one
+core and about 190 with 10 workers. The old trainer managed 0.46.
+
+`poker/cfr.py` and the other old-line sources stay byte-identical, because the
+preserved v10 evidence hashes them.
+
+Known gaps:
+1. No multiplayer equilibrium guarantee; strength is judged only by play against opponents.
+2. The rule gate is a floor, not a measure of strength. Stronger held-out opponents are still needed.
+3. Opponent bet sizes outside half-pot/pot are seen only through the price-to-call and pot-size buckets.
