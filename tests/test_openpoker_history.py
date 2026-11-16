@@ -118,9 +118,9 @@ def test_short_handed_history_matches_existing_six_seat_embedding():
 def test_async_client_replays_history_and_reuses_payload_for_duplicate_turn(tmp_path,monkeypatch):
     import asyncio
     import json
-    from types import SimpleNamespace
+    import sys
+    from types import ModuleType, SimpleNamespace
     import scripts.openpoker_client as client
-    import websockets.asyncio.client as websocket_client
     game,events,snap=fixture(3,4)
     key=observation_key(game.observe())
     policy=HistoryPolicy(dict(sums={key:[1.]+[0.]*(len(game.menu()[2])-1)},
@@ -138,7 +138,20 @@ def test_async_client_replays_history_and_reuses_payload_for_duplicate_turn(tmp_
             return json.dumps(messages.pop(0))
         async def send(self,message): self.sent.append(json.loads(message))
     socket=Socket()
-    monkeypatch.setattr(websocket_client,'connect',lambda *a,**k:socket)
+    try:
+        import websockets.asyncio.client as websocket_client
+        monkeypatch.setattr(websocket_client,'connect',lambda *a,**k:socket)
+    except ModuleNotFoundError:
+        ws_mod=ModuleType('websockets')
+        ws_async=ModuleType('websockets.asyncio')
+        ws_client=ModuleType('websockets.asyncio.client')
+        ws_exc=ModuleType('websockets.exceptions')
+        ws_client.connect=lambda *a,**k:socket
+        ws_exc.ConnectionClosed=Exception
+        monkeypatch.setitem(sys.modules,'websockets',ws_mod)
+        monkeypatch.setitem(sys.modules,'websockets.asyncio',ws_async)
+        monkeypatch.setitem(sys.modules,'websockets.asyncio.client',ws_client)
+        monkeypatch.setitem(sys.modules,'websockets.exceptions',ws_exc)
     monkeypatch.setattr(client,'active_game',lambda key:dict(playing=True,table_id='table'))
     log=tmp_path/'session.jsonl'
     args=SimpleNamespace(log=log,max_minutes=0,auto_rebuy=False,buy_in=2000)
