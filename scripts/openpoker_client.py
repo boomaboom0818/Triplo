@@ -91,6 +91,8 @@ def decision(snapshot, policy, public_history=(), history_complete=None):
     if hasattr(policy, 'fallback'):
         # Lean policies answer unseen states themselves with a tight rule player.
         before = getattr(policy, 'covered', 0)
+        if hasattr(policy.fallback, 'last'):
+            policy.fallback.last = None
         if isinstance(policy, history_cfr.HistoryPolicy):
             action = policy.act(observation, history_complete=history_complete is True)
         else:
@@ -109,6 +111,9 @@ def decision(snapshot, policy, public_history=(), history_complete=None):
         decision.last['history_verified'] = history_complete is True
         decision.last['history_length'] = len(public_history)
         decision.last['observation'] = asdict(observation)
+    equity_detail = getattr(getattr(policy, 'fallback', None), 'last', None)
+    if not covered and equity_detail is not None:
+        decision.last['equity_fallback'] = equity_detail
     return dict(type='action', hand_id=hand, turn_token=token,
                 client_action_id=str(uuid4()), **wire[action])
 
@@ -129,13 +134,27 @@ def record(path, **row):
         handle.write(json.dumps(dict(time=time.time(), **row)) + '\n')
 
 
+def redact(value):
+    """Never persist authentication or live action-authority tokens in diagnostics."""
+    if isinstance(value, dict):
+        return {k: redact(v) for k, v in value.items()
+                if k not in ('turn_token', 'api_key', 'token', 'Authorization')}
+    if isinstance(value, list):
+        return [redact(v) for v in value]
+    return value
+
+
 async def run(args, policy, key):
     from websockets.asyncio.client import connect
     from websockets.exceptions import ConnectionClosed
     delay = 1
     # Retain exact payloads for token duplicates, including across reconnects.
     pending = {}
+    sent_at = {}
+    rejected = set()
+    last_action_id = None
     log = getattr(args, 'log', None)
+    trace = getattr(args, 'trace', None)
     minutes = getattr(args, 'max_minutes', None)
     stop_at = None if minutes is None else time.monotonic() + 60 * minutes
     seat = None
@@ -154,6 +173,15 @@ async def run(args, policy, key):
                 async for raw in ws:
                     msg = json.loads(raw)
                     kind = msg.get('type')
+                    if trace and kind in ('hand_start', 'player_action', 'resync_response'):
+                        record(trace, type='wire', message=redact(msg))
+                    if kind == 'action_ack':
+                        action_id = msg.get('client_action_id')
+                        started = sent_at.pop(action_id, None)
+                        record(log, type='action_ack', client_action_id=action_id, status=msg.get('status'),
+                               latency_ms=None if started is None else 1000 * (time.monotonic() - started))
+                        if msg.get('status') == 'accepted':
+                            delay = 1
                     if kind != 'resync_response':
                         history.ingest(msg)
                     if kind == 'connected':
@@ -162,7 +190,6 @@ async def run(args, policy, key):
                             await send(resync_request(game['table_id']))
                         else:
                             await join()
-                        delay = 1
                     elif kind == 'lobby_joined':
                         await send(dict(type='set_auto_rebuy', enabled=args.auto_rebuy))
                     elif kind == 'your_turn':
@@ -185,15 +212,28 @@ async def run(args, policy, key):
                                     continue
                                 seat = hero.get('seat', seat)
                                 record(log, type='decision', **decision.last)
-                            await send(pending[identity])
+                            payload = pending[identity]
+                            if payload['client_action_id'] not in rejected:
+                                last_action_id = payload['client_action_id']
+                                sent_at.setdefault(last_action_id, time.monotonic())
+                                await send(payload)
+                    elif kind == 'season_ended' and getattr(args, 'stop_on_season_end', False):
+                        LOG.info('Season %s ended; stopping', msg.get('season_number'))
+                        record(log, type='season_ended', season_number=msg.get('season_number'),
+                               next_season_number=msg.get('next_season_number'))
+                        return
                     elif kind in ('table_closed', 'season_ended', 'rebuy_confirmed'):
                         pending.clear()
+                        sent_at.clear()
+                        rejected.clear()
                         await join()
                     elif kind == 'table_joined':
                         seat = msg.get('seat', seat)
                         record(log, type='table_joined', table_id=msg.get('table_id'), seat=seat, players=len(msg.get('players', [])))
                     elif kind == 'hand_result':
                         pending.clear()
+                        sent_at.clear()
+                        rejected.clear()
                         record(log, type='hand_result', seat=seat, result={k: v for k, v in msg.items() if k != 'type'})
                         # Stop only between hands so no live decision is abandoned.
                         if stop_at is not None and time.monotonic() >= stop_at:
@@ -205,13 +245,22 @@ async def run(args, policy, key):
                     elif kind in ('error', 'action_rejected'):
                         code = msg.get('code', 'unknown')
                         LOG.error('Server rejection: %s', code)
+                        record(log, type='action_rejected' if kind == 'action_rejected' else 'server_error', code=code)
+                        if kind == 'action_rejected':
+                            action_id = msg.get('client_action_id') or last_action_id
+                            if action_id:
+                                rejected.add(action_id)
+                            if code in ('stale_turn_token', 'stale_hand_action', 'not_your_turn') and history.table_id:
+                                await send(resync_request(history.table_id))
                         if code == 'auth_failed':
                             raise RuntimeError('OpenPoker authentication failed')
                     elif kind == 'busted' and not args.auto_rebuy:
                         LOG.info('Busted; automatic rebuy disabled')
                         return
-        except (OSError, ConnectionClosed, TimeoutError):
-            LOG.warning('Connection lost; retrying in %ss', delay)
+        except (OSError, ConnectionClosed, TimeoutError) as exc:
+            details = dict(error=type(exc).__name__, reason=str(exc), retry_seconds=delay)
+            record(log, type='connection_lost', **details)
+            LOG.warning('Connection lost (%s: %s); retrying in %ss', type(exc).__name__, exc, delay)
             await asyncio.sleep(delay)
             delay = min(30, delay * 2)
 
@@ -226,8 +275,13 @@ def main():
                         help='lean only: use tight fallback below this normalized average mass (default: disabled)')
     parser.add_argument('--min-visits', type=int, default=64,
                         help='history model: minimum sampled average visits before using a learned row')
+    parser.add_argument('--fallback', choices=('tight-v1', 'equity-v1'), default='tight-v1',
+                        help='rule fallback for history/lean policies; equity-v1 uses bounded range sampling')
+    parser.add_argument('--trace', type=Path, help='optional redacted public events and replay snapshots for diagnostics')
     parser.add_argument('--log', type=Path, help='append decisions and hand results as JSON lines')
     parser.add_argument('--max-minutes', type=float, help='stop after the first completed hand past this many minutes')
+    parser.add_argument('--stop-on-season-end', action='store_true',
+                        help='exit when the current season ends instead of joining the next one')
     args = parser.parse_args()
     if json.loads(args.checkpoint.read_text()).get('algorithm') in history_cfr.ALGORITHMS:
         saved = history_cfr.load(args.checkpoint)
@@ -255,6 +309,12 @@ def main():
         if args.min_support != 0:
             parser.error('--min-support requires a lean checkpoint')
         policy = CFRPolicy(saved['sums'], args.seed, saved['abstraction'])
+    if args.fallback == 'equity-v1':
+        if not hasattr(policy, 'fallback'):
+            parser.error('--fallback equity-v1 requires a history or lean checkpoint')
+        from poker.equity_policy import EquityPolicy
+        policy.fallback = EquityPolicy()
+        LOG.info('Fallback: equity-v1 (256 deterministic range samples)')
     try:
         asyncio.run(run(args, policy, key))
     except KeyboardInterrupt:

@@ -47,6 +47,40 @@ def test_rejects_incomplete_fold_state():
         decision(s, CFRPolicy({}, abstraction='texture-buckets-v2'))
 
 
+def test_stop_on_season_end_leaves_without_rejoining(monkeypatch):
+    import asyncio
+    import json
+    from types import SimpleNamespace
+    import scripts.openpoker_client as client
+
+    messages = [dict(type='connected'), dict(type='season_ended', season_number=17, next_season_number=18)]
+
+    class Socket:
+        def __init__(self):
+            self.sent = []
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *args):
+            pass
+        def __aiter__(self):
+            return self
+        async def __anext__(self):
+            if not messages:
+                raise StopAsyncIteration
+            return json.dumps(messages.pop(0))
+        async def send(self, message):
+            self.sent.append(json.loads(message))
+
+    socket = Socket()
+    import pytest
+    websocket_client = pytest.importorskip('websockets.asyncio.client')
+    monkeypatch.setattr(websocket_client, 'connect', lambda *a, **k: socket)
+    monkeypatch.setattr(client, 'active_game', lambda key: dict(playing=False))
+    args = SimpleNamespace(log=None, max_minutes=None, auto_rebuy=True, buy_in=1000, stop_on_season_end=True)
+    asyncio.run(client.run(args, object(), 'test-placeholder'))
+    assert [m['type'] for m in socket.sent] == ['join_lobby']
+
+
 def test_active_game_sets_user_agent_and_bearer(monkeypatch):
     import io
     import scripts.openpoker_client as client
@@ -142,3 +176,13 @@ def test_sparse_lean_row_is_logged_as_fallback():
     s['hero']['hole_cards'] = ['7s', '2h']
     assert decision(s, policy)['action'] == 'fold'
     assert not decision.last['covered'] and policy.thin == 1
+
+
+def test_trace_redacts_nested_action_authority():
+    from scripts.openpoker_client import redact
+    value={'snapshot':{'hero':{'turn_token':'secret','hole_cards':['Ah','Ad']}},
+           'replayed_events':[{'token':'secret','api_key':'secret','pot':50}]}
+    cleaned=redact(value)
+    assert 'secret' not in repr(cleaned)
+    assert cleaned['snapshot']['hero']['hole_cards']==['Ah','Ad']
+    assert value['snapshot']['hero']['turn_token']=='secret'

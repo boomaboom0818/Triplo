@@ -47,3 +47,43 @@ Reconnect requests now retain sequence watermarks and replay events before using
 the final snapshot. See [the river/history report](RIVER-003.md) for limitations
 and a short diagnostic command. Bounded river checkpoints are local-only and are
 not accepted by the live client.
+
+## Live replay repair and equity fallback (2026-11-16)
+
+Captured live traffic showed that a `player_action` closing a round can carry the
+**resulting** street (for example the final preflop call is labeled `flop`).
+Replay now derives the acting street from the validated ledger and accepts either
+the acting or resulting label only if the action actually produces that transition.
+Actor, pot, contribution, stack, fold and final-snapshot checks remain mandatory.
+Short all-in calls are replayed as calls, not raises. A sanitized real capture is
+retained in `tests/fixtures/openpoker-street-transition.json`.
+
+`--trace PATH` optionally saves public events and resync snapshots, including the
+bot's own hole cards, with action-authority/authentication tokens removed. Keep
+these diagnostic files private. `--log` now includes acknowledgment latency,
+server rejection codes and transport exception/close details. Rejected action IDs
+are not resent on a repeated token; stale authority requests a resync. Connection
+backoff resets on an accepted action rather than just on socket authentication.
+
+`--fallback equity-v1` selects the new bounded Monte Carlo fallback for history or
+lean checkpoints. The default remains `tight-v1`; changing the fallback does not
+change trained checkpoint weights or the visit gate. Equity inference consumes
+only the observation, uses broad public-history range priors, samples compatible
+joint opponent holdings and board runouts, and estimates showdown pot share
+(including ties). It uses pot odds and a conservative equity-realization margin,
+retains supported made-hand value bets, and preserves the old preflop baseline.
+It does not implement opponent learning, future betting search, or side-pot EV.
+Its sampling error is not uncertainty about the correctness of its range priors.
+
+Run the paired screen on fresh seeds (100 and 50 BB, four fixed rule styles,
+six seat rotations per deal):
+
+```sh
+.venv/bin/python -m scripts.equity_fallback_check --seed 40164000 --deals 1000 \
+  --out runs/bot/equity-fallback-new.json
+```
+
+Reports retain source hashes, per-deal outcomes, paired differences, pointwise
+95% normal intervals, and postflop decision latency. These are weak fixed-opponent
+screens, not proof of OpenPoker profitability. Preserve reports and avoid tuning
+on a confirmation seed and continuing to describe it as held out.

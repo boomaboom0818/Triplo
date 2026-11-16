@@ -90,7 +90,7 @@ class PublicHistory:
         pot=sb+bb; replay=[]
         for event in actions:
             seat=event['seat']
-            after=chips(event.get('pot_after',event['pot']))
+            after=chips(event['pot_after'] if 'pot_after' in event else event['pot'])
             delta=after-pot
             if delta<0: raise ValueError('pot moved backwards')
             if event.get('pot_before') is not None and chips(event['pot_before'])!=pot:
@@ -123,12 +123,13 @@ class PublicHistory:
             if not game.live: raise ValueError('action after terminal state')
             pos=mapping[event['seat']]
             pos=pos+pad if pos>=2 else pos
-            street=STREETS[event['street']]
-            if game.actors[0]!=pos or game.street!=street or sum(game.paid)!=before:
+            reported_street=STREETS.get(event['street'], 4 if event['street']=='showdown' else -1)
+            street=game.street
+            if game.actors[0]!=pos or sum(game.paid)!=before:
                 raise ValueError('missing or out-of-order public action')
             owed=min(game.stacks[pos],max(game.bets)-game.bets[pos])
             kind=event['action']
-            if kind in ('check','call'):
+            if kind in ('check','call') or kind=='all_in' and delta==owed and delta==game.stacks[pos]:
                 if delta!=owed or kind=='check' and owed: raise ValueError('call/check contribution mismatch')
                 raw_action=norm_action='call'
             elif kind=='fold':
@@ -148,7 +149,13 @@ class PublicHistory:
                 raise ValueError('call price mismatch')
             history.append((event['seat'],pos,street,norm_action,unit(before),unit(owed)))
             game.act(raw_action,False)
-            if chips(event.get('stack_after',event['stack']))!=game.stacks[pos]:
+            # Live events label a round-closing action with the resulting street.
+            # Older fixtures label the acting street. Accept either only when the
+            # validated ledger actually produces that transition.
+            resulting_street=game.street if game.live else 4
+            if reported_street not in (street, resulting_street):
+                raise ValueError('action street disagrees with reconstructed transition')
+            if chips(event['stack_after'] if 'stack_after' in event else event['stack'])!=game.stacks[pos]:
                 raise ValueError('stack history mismatch')
         if not game.live: raise ValueError('snapshot is not an acting hand')
         street=STREETS[snapshot['street']] if isinstance(snapshot.get('street'),str) else snapshot.get('street',len(snapshot['board'])-2 if snapshot['board'] else 0)

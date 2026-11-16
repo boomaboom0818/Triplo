@@ -247,3 +247,78 @@ def test_off_grid_live_chip_stacks_and_bets_reconstruct_cleanly():
     assert len(history)==8  # 1 pad fold + 7 real actions
     assert history[-1][3]==round(112/10)
 
+
+
+def test_captured_live_round_closing_call_uses_resulting_street():
+    import json
+    from pathlib import Path
+    response = json.loads((Path(__file__).parent / 'fixtures/openpoker-street-transition.json').read_text())
+    tracker = PublicHistory()
+    history, complete = tracker.resync(response)
+    assert complete, tracker.last_reason
+    # Server labels the last preflop call "flop" after advancing the game.
+    assert response['replayed_events'][-1]['street'] == 'flop'
+    assert history[-1][2] == 0 and history[-1][3] == 'call'
+    broken = deepcopy(response)
+    broken['replayed_events'][-2]['street'] = 'river'
+    assert not PublicHistory().resync(broken)[1]
+    missing = deepcopy(response)
+    del missing['replayed_events'][-2]
+    assert not PublicHistory().resync(missing)[1]
+
+
+def test_short_all_in_calls_are_not_replayed_as_raises():
+    found = False
+    for seed in range(1, 300):
+        game, events, snap = fixture(seed, 40)
+        calls = [e for e in events[1:] if e['action'] == 'call' and e['stack'] == 0]
+        if not calls:
+            continue
+        found = True
+        for event in calls:
+            event['action'] = 'all_in'
+        tracker = PublicHistory()
+        history, complete = tracker.resync(dict(snapshot=snap, replayed_events=events))
+        assert complete, tracker.last_reason
+        assert history == tuple(game.history)
+        break
+    assert found
+
+
+def test_rejected_token_is_not_retried_and_ack_is_logged(tmp_path, monkeypatch):
+    import asyncio
+    import json
+    from types import SimpleNamespace
+    import scripts.openpoker_client as client
+    import pytest
+    websocket_client = pytest.importorskip('websockets.asyncio.client')
+    _, events, snap = fixture(3, 4)
+    response = dict(type='resync_response', table_id='table', table_seq=snap['table_seq'],
+                    to_table_seq=snap['table_seq'], snapshot=snap, replayed_events=events)
+    messages = [dict(type='connected'), response,
+                dict(type='action_rejected', code='stale_turn_token'), response,
+                dict(type='hand_result')]
+    class Socket:
+        def __init__(self): self.sent=[]
+        async def __aenter__(self): return self
+        async def __aexit__(self,*args): pass
+        def __aiter__(self): return self
+        async def __anext__(self):
+            if not messages: raise StopAsyncIteration
+            return json.dumps(messages.pop(0))
+        async def send(self, raw):
+            payload=json.loads(raw); self.sent.append(payload)
+            if payload['type']=='action':
+                messages.insert(0, dict(type='action_ack',client_action_id=payload['client_action_id'],status='accepted'))
+    socket=Socket()
+    monkeypatch.setattr(websocket_client,'connect',lambda *a,**k: socket)
+    monkeypatch.setattr(client,'active_game',lambda key:dict(playing=True,table_id='table'))
+    log=tmp_path/'session.jsonl'
+    args=SimpleNamespace(log=log,max_minutes=0,auto_rebuy=False,buy_in=1000)
+    policy=HistoryPolicy(dict(sums={},visits={},stack_bb=100))
+    asyncio.run(client.run(args,policy,'test-placeholder'))
+    assert len([m for m in socket.sent if m['type']=='action'])==1
+    rows=[json.loads(l) for l in log.read_text().splitlines()]
+    ack=next(r for r in rows if r['type']=='action_ack')
+    assert ack['latency_ms']>=0
+    assert any(r['type']=='action_rejected' for r in rows)
