@@ -45,6 +45,10 @@ strategy transfer failures, not proof of a corrupt action coordinate.
 
 ## Next controlled investigation
 
+Follow-up: [the measured decision-guard investigation](AGGRESSIVE-DECISION-GUARD.md)
+rejects the recent-average-only variant and records a promising, unpromoted
+pressure-guard candidate.
+
 Before a larger training run, compare inherited averages with new-distribution-only
 average deltas on the same consumed development deals, requiring identical keys,
 legal menu lengths and explicit support checks. Preserve inherited regrets and
