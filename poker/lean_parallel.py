@@ -10,6 +10,7 @@ count and batch sizes, never on timing.
 from array import array
 import gc
 import json
+import math
 import multiprocessing
 import os
 from pathlib import Path
@@ -18,7 +19,8 @@ import shutil
 
 from .fast_game import FastGame, LEAN_MENU
 from .lean_abstraction import VERSION, card_features, lean_key
-from .lean_cfr import ALGORITHM, PLAYERS
+from .lean_cfr import ALGORITHM, ALGORITHMS, MIXTURE_ALGORITHM, PLAYERS
+from .loose_opponents import LooseCaller, PROFILES, VERSION as POPULATION_VERSION
 
 STATE_SCHEMA = 'lean-parallel-state-v1'
 _SOLVER = None
@@ -26,15 +28,26 @@ _SOLVER = None
 
 class Worker:
     """LeanCFR.walk reading frozen base tables and writing local deltas."""
-    def __init__(self, index, base, rng):
+    def __init__(self, index, base, rng, population_probability=0.):
         self.index, self.base, self.rng = index, base, rng
         self.regrets = {}
         self.sums = {}
         self.nodes = 0
+        self.population_probability = population_probability
+        self.fixed = {}
+        self.population_iterations = 0
 
     def iterate(self, weight):
         root = FastGame(self.rng.randrange(2 ** 63), PLAYERS, lean=True)
+        population = self.population_probability > 0 and self.rng.random() < self.population_probability
+        self.population_iterations += population
         for traverser in range(PLAYERS):
+            self.fixed = {}
+            if population:
+                # Leave two other learners so sampled-node averaging still
+                # observes learner strategies in multiway contexts.
+                seats = self.rng.sample([i for i in range(PLAYERS) if i != traverser], 3)
+                self.fixed = {i: LooseCaller(self.rng.randrange(len(PROFILES))) for i in seats}
             self.cards = {}
             self.walk(root.clone(), traverser, weight)
 
@@ -43,6 +56,10 @@ class Worker:
         if not game.live:
             return game.payoffs[traverser] / 2
         actor = game.actors[0]
+        if actor in self.fixed:
+            # Fixed behavior drives utility estimates but never learned sums.
+            game.act(self.fixed[actor].act(game.observe()), False)
+            return self.walk(game, traverser, weight)
         pot, call, legal = game.menu()
         street = game.street
         cards = self.cards.get((actor, street))
@@ -93,15 +110,19 @@ def _work(job):
     seed, round_index, worker, start, workers, batch = job
     gc.disable()
     solver = _SOLVER
-    task = Worker(solver.index, solver.regrets, Random(f'{seed}:{round_index}:{worker}'))
+    task = Worker(solver.index, solver.regrets, Random(f'{seed}:{round_index}:{worker}'), solver.population_probability)
     for j in range(batch):
         task.iterate(start + j * workers + worker + 1)
-    return task.regrets, task.sums, task.nodes
+    return task.regrets, task.sums, task.nodes, task.population_iterations
 
 
 class ParallelLean:
-    def __init__(self, seed=1):
+    def __init__(self, seed=1, population_probability=0.):
+        if not math.isfinite(population_probability) or not 0 <= population_probability <= 1:
+            raise ValueError('population probability must be between zero and one')
         self.seed = seed
+        self.population_probability = population_probability
+        self.population_iterations = 0
         self.index = {}                 # key -> offset * 8 + action count
         self.regrets = array('d')
         self.sums = array('d')
@@ -122,8 +143,9 @@ class ParallelLean:
                 gc.unfreeze()
         finally:
             _SOLVER = None
-        for regrets, sums, nodes in results:
+        for regrets, sums, nodes, population_iterations in results:
             self.nodes += nodes
+            self.population_iterations += population_iterations
             for table, delta in ((self.regrets, regrets), (self.sums, sums)):
                 for key, row in delta.items():
                     start = self._slot(key, len(row))
@@ -150,8 +172,11 @@ class ParallelLean:
 
     # --- persistence --------------------------------------------------------
     def meta(self):
-        return dict(schema=1, algorithm=ALGORITHM, abstraction=VERSION, menu=LEAN_MENU, players=PLAYERS,
-                    seed=self.seed, iterations=self.iterations, nodes=self.nodes, rounds=self.rounds)
+        return dict(schema=1, algorithm=MIXTURE_ALGORITHM if self.population_probability else ALGORITHM,
+                    abstraction=VERSION, menu=LEAN_MENU, players=PLAYERS,
+                    seed=self.seed, iterations=self.iterations, nodes=self.nodes, rounds=self.rounds,
+                    population_probability=self.population_probability, population_version=POPULATION_VERSION,
+                    population_iterations=self.population_iterations)
 
     def save_state(self, directory):
         """Compact exact state for resuming; replaced atomically."""
@@ -181,10 +206,13 @@ class ParallelLean:
     def load_state(cls, directory):
         directory = Path(directory)
         meta = json.loads((directory / 'meta.json').read_text())
-        if (meta.get('state_schema') != STATE_SCHEMA or meta.get('algorithm') != ALGORITHM
+        if (meta.get('state_schema') != STATE_SCHEMA or meta.get('algorithm') not in ALGORITHMS
                 or meta.get('abstraction') != VERSION or meta.get('menu') != LEAN_MENU):
             raise ValueError('incompatible lean state')
-        solver = cls(meta['seed'])
+        solver = cls(meta['seed'], meta.get('population_probability', 0.))
+        if meta['algorithm'] != solver.meta()['algorithm'] or (solver.population_probability and meta.get('population_version') != POPULATION_VERSION):
+            raise ValueError('incompatible population configuration')
+        solver.population_iterations = meta.get('population_iterations', 0)
         solver.iterations, solver.nodes, solver.rounds = meta['iterations'], meta['nodes'], meta['rounds']
         with (directory / 'keys.txt').open() as handle:
             for line in handle:

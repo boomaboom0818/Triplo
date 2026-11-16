@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import time
+from dataclasses import asdict
 from pathlib import Path
 from uuid import uuid4
 from urllib.request import Request, urlopen
@@ -15,11 +16,13 @@ from poker.config import load_checkpoint
 from poker.fast_game import LEAN_MENU
 from poker.game import Observation
 from poker import lean_cfr
+from poker import history_cfr
+from poker.openpoker_history import PublicHistory
 
 LOG = logging.getLogger(__name__)
 
 
-def decision(snapshot, policy):
+def decision(snapshot, policy, public_history=(), history_complete=None):
     """Translate a complete acting-player snapshot; return an idempotent action."""
     hero = snapshot['hero']
     token, hand = hero['turn_token'], snapshot['hand_id']
@@ -79,23 +82,33 @@ def decision(snapshot, policy):
         if position >= 2:
             position += pad
     observation = Observation(position, position, hole, board, stacks, active,
-        pot, unit(offered.get('call', {}).get('amount', 0)), street, tuple(legal), ())
+        pot, unit(offered.get('call', {}).get('amount', 0)), street, tuple(legal), tuple(public_history))
     # Lean policies carry their own key function; poker/cfr.py stays frozen for the old line.
     key = policy.key(observation) if hasattr(policy, 'key') else information_key(observation, policy.abstraction)
     row = policy.sums.get(key)
+    covered = bool(row and any(row))
     # Unseen states should not silently become uniform random raises.
     if hasattr(policy, 'fallback'):
         # Lean policies answer unseen states themselves with a tight rule player.
-        action = policy.act(observation)
+        before = getattr(policy, 'covered', 0)
+        if isinstance(policy, history_cfr.HistoryPolicy):
+            action = policy.act(observation, history_complete=history_complete is True)
+        else:
+            action = policy.act(observation)
+        covered = getattr(policy, 'covered', 0) > before
     elif row is None or not any(row):
         LOG.warning('Uncovered state: using check/fold/call fallback')
         action = 'call' if passive == 'check' else 'fold' if 'fold' in offered else 'call'
     else:
         action = policy.act(observation)
-    LOG.info('Decision street=%s active=%s covered=%s action=%s',street,sum(observation.active),bool(row and any(row)),wire[action]['action'])
+    LOG.info('Decision street=%s active=%s covered=%s action=%s',street,sum(observation.active),covered,wire[action]['action'])
     # Diagnostics for the optional session log; never sent on the wire.
     decision.last = dict(hand_id=hand, seat=hero['seat'], street=street, active=sum(observation.active),
-                         covered=bool(row and any(row)), action=wire[action]['action'], amount=wire[action].get('amount'))
+                         covered=covered, action=wire[action]['action'], amount=wire[action].get('amount'))
+    if isinstance(policy, history_cfr.HistoryPolicy):
+        decision.last['history_verified'] = history_complete is True
+        decision.last['history_length'] = len(public_history)
+        decision.last['observation'] = asdict(observation)
     return dict(type='action', hand_id=hand, turn_token=token,
                 client_action_id=str(uuid4()), **wire[action])
 
@@ -126,6 +139,10 @@ async def run(args, policy, key):
     minutes = getattr(args, 'max_minutes', None)
     stop_at = None if minutes is None else time.monotonic() + 60 * minutes
     seat = None
+    history = PublicHistory()
+    def resync_request(table_id):
+        return dict(type='resync_request', table_id=table_id,
+                    last_table_seq=history.watermark if history.table_id == table_id else 0)
     while True:
         try:
             async with connect('wss://openpoker.ai/ws', additional_headers={
@@ -137,10 +154,12 @@ async def run(args, policy, key):
                 async for raw in ws:
                     msg = json.loads(raw)
                     kind = msg.get('type')
+                    if kind != 'resync_response':
+                        history.ingest(msg)
                     if kind == 'connected':
                         game = await asyncio.to_thread(active_game, key)
                         if game.get('playing'):
-                            await send(dict(type='resync_request', table_id=game['table_id']))
+                            await send(resync_request(game['table_id']))
                         else:
                             await join()
                         delay = 1
@@ -148,15 +167,19 @@ async def run(args, policy, key):
                         await send(dict(type='set_auto_rebuy', enabled=args.auto_rebuy))
                     elif kind == 'your_turn':
                         # A resync supplies authoritative folds, bets, mapping and token together.
-                        await send(dict(type='resync_request', table_id=msg['table_id']))
+                        await send(resync_request(msg['table_id']))
                     elif kind == 'resync_response':
                         snapshot = msg['snapshot']
+                        public_history, complete = history.resync(msg)
+                        history.ingest(msg)
                         hero = snapshot.get('hero', {})
                         if hero.get('turn_token'):
                             identity = (snapshot['hand_id'], hero['turn_token'])
                             if identity not in pending:
                                 try:
-                                    pending[identity] = decision(snapshot, policy)
+                                    pending[identity] = decision(snapshot, policy, public_history, complete)
+                                    if isinstance(policy, history_cfr.HistoryPolicy):
+                                        decision.last['history_reason'] = history.last_reason
                                 except (KeyError, ValueError, StopIteration) as exc:
                                     LOG.error('Cannot translate snapshot: %s', exc)
                                     continue
@@ -175,9 +198,10 @@ async def run(args, policy, key):
                         # Stop only between hands so no live decision is abandoned.
                         if stop_at is not None and time.monotonic() >= stop_at:
                             LOG.info('Session time limit reached between hands')
+                            await send(dict(type='leave_table'))
                             return
                     elif kind == 'error' and msg.get('code') == 'already_seated':
-                        await send(dict(type='resync_request', table_id=msg['table_id']))
+                        await send(resync_request(msg['table_id']))
                     elif kind in ('error', 'action_rejected'):
                         code = msg.get('code', 'unknown')
                         LOG.error('Server rejection: %s', code)
@@ -198,23 +222,38 @@ def main():
     parser.add_argument('--buy-in', type=int, choices=range(1000, 5001), default=2000, metavar='1000..5000')
     parser.add_argument('--auto-rebuy', action='store_true')
     parser.add_argument('--seed', type=int, default=0)
+    parser.add_argument('--min-support', type=float, default=0.,
+                        help='lean only: use tight fallback below this normalized average mass (default: disabled)')
+    parser.add_argument('--min-visits', type=int, default=64,
+                        help='history model: minimum sampled average visits before using a learned row')
     parser.add_argument('--log', type=Path, help='append decisions and hand results as JSON lines')
     parser.add_argument('--max-minutes', type=float, help='stop after the first completed hand past this many minutes')
     args = parser.parse_args()
-    try:
-        saved = lean_cfr.load(args.checkpoint)
-    except ValueError:
-        saved = load_checkpoint(args.checkpoint, model_id='bot-opponent-v1')
-        if saved.get('abstraction') != 'texture-buckets-v2':
-            parser.error('client requires a lean-v3 or texture-buckets-v2 checkpoint')
+    if json.loads(args.checkpoint.read_text()).get('algorithm') in history_cfr.ALGORITHMS:
+        saved = history_cfr.load(args.checkpoint)
+    else:
+        try:
+            saved = lean_cfr.load(args.checkpoint)
+        except ValueError:
+            saved = load_checkpoint(args.checkpoint, model_id='bot-opponent-v1')
+            if saved.get('abstraction') != 'texture-buckets-v2':
+                parser.error('client requires a history-public-v1, history-compact-v1, lean-v3 or texture-buckets-v2 checkpoint')
     key = os.environ.get('OPEN_POKER_API_KEY')
     if not key:
         parser.error('set OPEN_POKER_API_KEY in the environment')
     logging.basicConfig(level=logging.INFO)
     LOG.info('Checkpoint sha256=%s abstraction=%s iterations=%s',hashlib.sha256(args.checkpoint.read_bytes()).hexdigest(),saved['abstraction'],saved['iterations'])
-    if saved['abstraction'] == lean_cfr.VERSION:
-        policy = lean_cfr.LeanPolicy(saved['sums'], args.seed)
+    if saved['abstraction'] in history_cfr.VERSIONS:
+        if args.min_support != 0:
+            parser.error('--min-support requires a lean checkpoint')
+        policy = history_cfr.HistoryPolicy(saved, args.seed, args.min_visits)
+        LOG.info('History model: learned rows require verified replay and min_visits=%s', args.min_visits)
+    elif saved['abstraction'] == lean_cfr.VERSION:
+        policy = lean_cfr.LeanPolicy.from_checkpoint(saved, args.seed, args.min_support)
+        LOG.info('Sparse-row fallback min_support=%s', args.min_support)
     else:
+        if args.min_support != 0:
+            parser.error('--min-support requires a lean checkpoint')
         policy = CFRPolicy(saved['sums'], args.seed, saved['abstraction'])
     try:
         asyncio.run(run(args, policy, key))

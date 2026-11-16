@@ -59,7 +59,7 @@ def run(checkpoint, deals, out=None):
         raise ValueError('at least two deals required')
     if out is not None and Path(out).exists():
         raise ValueError('preserve existing gate report')
-    lean = json.loads(Path(checkpoint).read_text()).get('algorithm') == lean_cfr.ALGORITHM
+    lean = json.loads(Path(checkpoint).read_text()).get('algorithm') in lean_cfr.ALGORITHMS
     saved = lean_cfr.load(checkpoint) if lean else load_checkpoint(checkpoint, model_id='bot-opponent-v1')
     styles = {}
     for style in STYLES:

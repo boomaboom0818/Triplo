@@ -105,3 +105,38 @@ def test_unseen_deep_all_in_is_answered_by_the_rule_fallback():
     assert policy.act(dataclasses.replace(o, hole=('As', 'Ah'))) == 'call'
     assert policy.act(dataclasses.replace(o, hole=('9s', '2h'))) == 'fold'
     assert policy.covered == 0 and policy.decisions == 2
+
+
+def test_sparse_average_uses_fallback_without_mutating_checkpoint():
+    import dataclasses
+    o = dataclasses.replace(FastGame(1, lean=True).observe(), hole=('7s', '2h'))
+    key = observation_key(o)
+    # Learned row always raises; tight fallback always folds this hand.
+    row = [0., 0., 0., 1.]
+    saved = dict(iterations=10, sums={key: row[:]})
+    raw = LeanPolicy.from_checkpoint(saved)
+    guarded = LeanPolicy.from_checkpoint(saved, min_support=2 / 55)
+    boundary = LeanPolicy.from_checkpoint(saved, min_support=1 / 55)
+    assert raw.act(o) == o.legal[-1]
+    assert guarded.act(o) == 'fold'
+    assert boundary.act(o) == o.legal[-1]
+    assert guarded.thin == 1 and guarded.covered == 0 and guarded.decisions == 1
+    assert saved['sums'][key] == row
+    for invalid in (-1, float('inf'), float('nan')):
+        with pytest.raises(ValueError):
+            LeanPolicy.from_checkpoint(saved, min_support=invalid)
+
+
+def test_support_screen_records_matched_controls(tmp_path):
+    from scripts.lean_support_check import run
+    solver = LeanCFR(1)
+    path = tmp_path / 'empty.json'
+    solver.save(path)
+    out = tmp_path / 'report.json'
+    report = run(path, 2, 1234567, 1e-4, out)
+    for style in report['styles'].values():
+        assert style['supported_minus']['raw']['bb_per_100'] == 0
+        assert style['supported_minus']['fallback_only']['interval_95'] == [0, 0]
+        assert style['policies']['supported']['learned_decision_fraction'] == 0
+    with pytest.raises(ValueError, match='preserve'):
+        run(path, 2, 1234567, 1e-4, out)
