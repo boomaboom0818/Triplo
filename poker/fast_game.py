@@ -10,13 +10,18 @@ from .fast_eval import NAMES, evaluate
 from .game import Observation
 
 SMALL_BLIND, BIG_BLIND, MIN_BET = 1, 2, 2
+LEAN_MENU = 'lean-menu-v1'
 
 
 class FastGame:
     __slots__ = ('n', 'order', 'deck', 'next_card', 'hole', 'board', 'stacks', 'bets', 'paid', 'active',
-                 'actors', 'raise_size', 'acted', 'short', 'street', 'live', 'payoffs', 'history')
+                 'actors', 'raise_size', 'acted', 'short', 'street', 'live', 'payoffs', 'history', 'lean')
 
-    def __init__(self, seed, players=6, button=0, stacks=None):
+    def __init__(self, seed, players=6, button=0, stacks=None, lean=False):
+        # lean=True selects LEAN_MENU: half-pot and pot raises only, plus the all-in when
+        # it is at most a twice-pot raise. No bare minimum raise (it permits ~100-raise
+        # wars that explode the tree) and no 100bb open-shove.
+        self.lean = lean
         if not 3 <= players <= 6:
             raise ValueError('tables must have 3–6 players')
         n = self.n = players
@@ -50,7 +55,7 @@ class FastGame:
         g.hole = self.hole; g.board = self.board[:]; g.stacks = self.stacks[:]; g.bets = self.bets[:]
         g.paid = self.paid[:]; g.active = self.active[:]; g.actors = self.actors[:]
         g.raise_size = self.raise_size; g.acted = self.acted; g.short = self.short
-        g.street = self.street; g.live = self.live; g.payoffs = self.payoffs; g.history = self.history[:]
+        g.lean = self.lean; g.street = self.street; g.live = self.live; g.payoffs = self.payoffs; g.history = self.history[:]
         return g
 
     # --- betting rounds -------------------------------------------------
@@ -164,7 +169,12 @@ class FastGame:
         if self.can_raise():
             hi = stack + bets[i]
             lo = min(hi, max(self.raise_size, MIN_BET) + top)
-            legal.extend(sorted({lo, hi, min(hi, max(lo, top + pot // 2)), min(hi, max(lo, top + pot))}))
+            sizes = {min(hi, max(lo, top + pot // 2)), min(hi, max(lo, top + pot))}
+            if not self.lean:
+                sizes.update((lo, hi))
+            elif hi <= top + 2 * pot:
+                sizes.add(hi)
+            legal.extend(sorted(sizes))
         return pot, min(stack, top - bets[i]), tuple(legal)
 
     def observe(self):

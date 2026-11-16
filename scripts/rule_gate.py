@@ -13,22 +13,28 @@ from pathlib import Path
 from poker.cfr import CFRPolicy
 from poker.config import load_checkpoint
 from poker.evaluate import LiveFallbackPolicy
+from poker.fast_game import FastGame
 from poker.game import Game
+from poker import lean_cfr
 from poker.rule_opponents import RulePolicy, STYLES
 
 SEED = 880000
 ALWAYS_FOLD_BB_PER_100 = -25.0
 
 
-def play_style(hero, style, deals, seed=SEED):
-    """Per-deal mean bb/100 of the hero over the six seat rotations."""
+def play_style(hero, style, deals, seed=SEED, lean=False):
+    """Per-deal mean bb/100 of the hero over the six seat rotations.
+
+    lean=True plays the same deals on the fast engine with the lean raise menu,
+    which is the game lean checkpoints are trained on.
+    """
     values, shoves = [], 0
     opponent = RulePolicy(style)
     for deal in range(deals):
         block = []
         for seat in range(6):
-            game = Game(seed + deal)
-            while game.state.status:
+            game = FastGame(seed + deal, lean=True) if lean else Game(seed + deal)
+            while game.live if lean else game.state.status:
                 o = game.observe()
                 action = (hero if o.player == seat else opponent).act(o)
                 shoves += o.player == seat and not o.street and isinstance(action, int) and action >= 100
@@ -52,11 +58,17 @@ def run(checkpoint, deals, out=None):
         raise ValueError('at least two deals required')
     if out is not None and Path(out).exists():
         raise ValueError('preserve existing gate report')
-    saved = load_checkpoint(checkpoint, model_id='bot-opponent-v1')
+    lean = json.loads(Path(checkpoint).read_text()).get('algorithm') == lean_cfr.ALGORITHM
+    saved = lean_cfr.load(checkpoint) if lean else load_checkpoint(checkpoint, model_id='bot-opponent-v1')
     styles = {}
     for style in STYLES:
-        hero = LiveFallbackPolicy(CFRPolicy(saved['sums'], 5, saved['abstraction']))
-        styles[style] = summarize(*play_style(hero, style, deals))
+        if lean:
+            hero = lean_cfr.LeanPolicy(saved['sums'], 5)
+        else:
+            hero = LiveFallbackPolicy(CFRPolicy(saved['sums'], 5, saved['abstraction']))
+        styles[style] = summarize(*play_style(hero, style, deals, lean=lean))
+        if lean:
+            styles[style]['coverage'] = hero.covered / hero.decisions
     report = dict(checkpoint=str(checkpoint), checkpoint_sha256=hashlib.sha256(Path(checkpoint).read_bytes()).hexdigest(),
                   iterations=saved['iterations'], algorithm=saved['algorithm'], seed=SEED,
                   always_fold_bb_per_100=ALWAYS_FOLD_BB_PER_100, styles=styles,
