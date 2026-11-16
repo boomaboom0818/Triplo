@@ -196,9 +196,9 @@ explosion discovered above:
 ```
 
 In the sustained training progression (`runs/bot/history-sustained-001`, 10
-workers at 100BB with `population=0.5`), learned decision coverage at the
-64-visit gate and win rates (`bb/100`) progressed as follows across `11,030`
-(100 deals), `51,520` (200 deals), and `81,520` (200 deals) iterations:
+workers at 100BB with `population=0.5` up to `876,520` iterations, `1,663,968,933`
+nodes, and `7,934,624` unique state rows), learned decision coverage at the
+64-visit gate (`seed=21310000`) and win rates (`bb/100`) progressed as follows:
 
 | Checkpoint | Style | Learned coverage | Candidate (`bb/100`) | Guarded fallback (`bb/100`) | Paired diff (`bb/100`) |
 | --- | --- | ---: | ---: | ---: | ---: |
@@ -214,6 +214,22 @@ workers at 100BB with `population=0.5`), learned decision coverage at the
 | `81,520` (`gate-81k.json`) | `aggressive-v1` | `50.9%` | `-22.88` | `+24.54` | `-47.42` |
 | `81,520` (`gate-81k.json`) | `station-v1` | `30.5%` | `+198.12` | `+187.29` | `+10.83` |
 | `81,520` (`gate-81k.json`) | `shover-v1` | `48.9%` | `+53.04` | `+12.00` | `+41.04` |
+| `151,520` (`gate-151k.json`) | `tight-v1` | `52.5%` | `-65.42` | `-30.29` | `-35.13` |
+| `151,520` (`gate-151k.json`) | `aggressive-v1` | `60.8%` | `-44.29` | `+24.54` | `-68.83` |
+| `151,520` (`gate-151k.json`) | `station-v1` | `41.3%` | `+209.33` | `+187.29` | `+22.04` |
+| `151,520` (`gate-151k.json`) | `shover-v1` | `55.5%` | `+8.75` | `+12.00` | `-3.25` |
+| `716,520` (`gate-716k.json`) | `tight-v1` | `72.5%` | `-46.25` | `-30.29` | `-15.96` |
+| `716,520` (`gate-716k.json`) | `aggressive-v1` | `82.5%` | `-34.04` | `+24.54` | `-58.58` |
+| `716,520` (`gate-716k.json`) | `station-v1` | `75.8%` | `+378.29` | `+187.29` | `+191.00` |
+| `716,520` (`gate-716k.json`) | `shover-v1` | `61.7%` | `+42.08` | `+12.00` | `+30.08` |
+| `856,520` (`gate-856k.json`) | `tight-v1` | `74.4%` | `+18.08` | `-30.29` | `+48.38` |
+| `856,520` (`gate-856k.json`) | `aggressive-v1` | `83.6%` | `-18.83` | `+24.54` | `-43.38` |
+| `856,520` (`gate-856k.json`) | `station-v1` | `78.5%` | `+351.62` | `+187.29` | `+164.33` |
+| `856,520` (`gate-856k.json`) | `shover-v1` | `61.9%` | `+51.21` | `+12.00` | `+39.21` |
+| `876,520` (`gate-876k.json`) | `tight-v1` | `76.2%` | `-18.04` | `-30.29` | `+12.25` |
+| `876,520` (`gate-876k.json`) | `aggressive-v1` | `84.0%` | `-121.54` | `+24.54` | `-146.08` |
+| `876,520` (`gate-876k.json`) | `station-v1` | `77.1%` | `+252.17` | `+187.29` | `+64.88` |
+| `876,520` (`gate-876k.json`) | `shover-v1` | `61.7%` | `+40.21` | `+12.00` | `+28.21` |
 
 ## Verification
 
