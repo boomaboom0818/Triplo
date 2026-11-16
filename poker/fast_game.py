@@ -21,7 +21,9 @@ class FastGame:
         # lean=True selects LEAN_MENU: half-pot and pot raises only, plus the all-in when
         # it is at most a twice-pot raise. No bare minimum raise (it permits ~100-raise
         # wars that explode the tree) and no 100bb open-shove.
-        self.lean = lean
+        # A bit mask of positions is also accepted, so a lean-trained seat can face
+        # opponents who use the full reference menu (as live opponents do).
+        self.lean = 63 if lean is True else int(lean)
         if not 3 <= players <= 6:
             raise ValueError('tables must have 3–6 players')
         n = self.n = players
@@ -170,7 +172,7 @@ class FastGame:
             hi = stack + bets[i]
             lo = min(hi, max(self.raise_size, MIN_BET) + top)
             sizes = {min(hi, max(lo, top + pot // 2)), min(hi, max(lo, top + pot))}
-            if not self.lean:
+            if not self.lean >> i & 1:
                 sizes.update((lo, hi))
             elif hi <= top + 2 * pot:
                 sizes.add(hi)

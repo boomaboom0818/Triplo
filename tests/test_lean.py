@@ -86,3 +86,22 @@ def test_lean_policy_plays_legal_hands_on_the_lean_engine():
     hero = LeanPolicy(solver.sums, 1)
     values, shoves = play_style(hero, 'tight-v1', 20, lean=True)
     assert len(values) == 20 and hero.decisions > 100 and 0 < hero.covered <= hero.decisions
+
+
+def test_only_masked_positions_get_the_lean_menu():
+    game = FastGame(1, lean=1 << 3)
+    assert game.menu()[2] == ('call', 'fold', 4, 5, 200)       # position 2 keeps the full menu
+    game.act('fold')
+    assert game.menu()[2] == ('call', 'fold', 4, 5)            # position 3 is lean
+
+
+def test_unseen_deep_all_in_is_answered_by_the_rule_fallback():
+    import dataclasses
+    game = FastGame(1, lean=1 << 3)
+    game.act(200)                                              # a 100bb open shove: not in the trained game
+    o = game.observe()
+    assert o.legal == ('call', 'fold')
+    policy = LeanPolicy({}, 1)
+    assert policy.act(dataclasses.replace(o, hole=('As', 'Ah'))) == 'call'
+    assert policy.act(dataclasses.replace(o, hole=('9s', '2h'))) == 'fold'
+    assert policy.covered == 0 and policy.decisions == 2

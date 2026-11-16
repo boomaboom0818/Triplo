@@ -11,6 +11,7 @@ checkpoint in all six seats; the unit of analysis is the deal.
 | `tight-v1` | Plays roughly the top fifth of hands, calls all-ins only with premiums, bets made hands. |
 | `aggressive-v1` | Opens wider, re-raises opens with strong hands, stabs at checked flops. |
 | `station-v1` | Never raises; calls preflop with playable hands and never folds a pair. |
+| `shover-v1` | Makes the largest raise (all-in on the full menu) with any decent hand, otherwise gives up. |
 
 **Pass:** the lower end of the 95% interval is above 0 bb/100 against every style.
 Always folding scores about -25 bb/100, printed for reference.

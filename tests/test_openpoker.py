@@ -101,3 +101,30 @@ def test_short_handed_table_maps_to_six_max_with_early_seats_folded():
     s['actor_seat'] = s['hero']['seat'] = 0
     seen.clear(); decision(s, Policy())
     assert seen[1].position == 0
+
+
+def test_lean_policy_gets_lean_menu_and_rule_fallback():
+    from poker.fast_game import FastGame
+    from poker.lean_abstraction import observation_key
+    from poker.lean_cfr import LeanPolicy
+    seen = []
+    class Spy(LeanPolicy):
+        def act(self, o): seen.append(o); return super().act(o)
+    # Trained game state for the same spot: first to act, 100bb, lean menu.
+    trained = FastGame(1, lean=True).observe()
+    key = observation_key(__import__('dataclasses').replace(trained, hole=('Ah', 'Kd')))
+    policy = Spy({key: [0, 0, 0, 1]}, 1)
+    a = decision(snapshot(), policy)
+    assert seen[0].legal == ('call', 'fold', 4, 5) and a['action'] == 'raise' and a['amount'] == 50
+    # Facing a 100bb shove the lean menu has no answer; the tight rule player decides.
+    s = snapshot()
+    s['pot'] = 2030; s['seats'][5]['bet'] = 2000; s['seats'][5]['stack'] = 0
+    s['hero']['valid_actions'] = [dict(action='fold'), dict(action='call', amount=2000)]
+    assert decision(s, policy)['action'] == 'fold'             # AKo is not a premium for the tight player
+    s['hero']['hole_cards'] = ['Ah', 'As']
+    assert decision(s, policy)['action'] == 'call'
+    # A short stack brings the all-in back into the lean menu at the exact wire amount.
+    s = snapshot()
+    s['seats'][2]['stack'] = 75; s['hero']['valid_actions'][2] = dict(action='raise', min=40, max=75)
+    decision(s, policy)
+    assert seen[-1].legal == ('call', 'fold', 4, 5, 8)

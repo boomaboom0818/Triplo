@@ -12,7 +12,9 @@ from urllib.request import Request, urlopen
 
 from poker.cfr import CFRPolicy, information_key
 from poker.config import load_checkpoint
+from poker.fast_game import LEAN_MENU
 from poker.game import Observation
+from poker import lean_cfr
 
 LOG = logging.getLogger(__name__)
 
@@ -46,10 +48,14 @@ def decision(snapshot, policy):
         lo, hi = offered['raise']['min'], offered['raise']['max']
         bet = max(unit(s['bet']) for s in seats)
         # Retain exact advertised wire bounds even when normalization rounds.
-        sizes = {unit(lo): lo, unit(hi): hi}
+        lean = getattr(policy, 'menu', None) == LEAN_MENU
+        sizes = {} if lean else {unit(lo): lo, unit(hi): hi}
         for n in (bet + pot // 2, bet + pot):
             amount = min(hi, max(lo, round(n * scale)))
             sizes.setdefault(unit(amount), amount)
+        # Lean checkpoints are trained without a bare minimum raise or deep all-in.
+        if lean and unit(hi) <= bet + 2 * pot:
+            sizes[unit(hi)] = hi
         for n, amount in sorted(sizes.items()):
             legal.append(n); wire[n] = {'action': 'raise', 'amount': amount}
     elif 'all_in' in offered:
@@ -74,10 +80,14 @@ def decision(snapshot, policy):
             position += pad
     observation = Observation(position, position, hole, board, stacks, active,
         pot, unit(offered.get('call', {}).get('amount', 0)), street, tuple(legal), ())
-    key = information_key(observation, policy.abstraction)
+    # Lean policies carry their own key function; poker/cfr.py stays frozen for the old line.
+    key = policy.key(observation) if hasattr(policy, 'key') else information_key(observation, policy.abstraction)
     row = policy.sums.get(key)
     # Unseen states should not silently become uniform random raises.
-    if row is None or not any(row):
+    if hasattr(policy, 'fallback'):
+        # Lean policies answer unseen states themselves with a tight rule player.
+        action = policy.act(observation)
+    elif row is None or not any(row):
         LOG.warning('Uncovered state: using check/fold/call fallback')
         action = 'call' if passive == 'check' else 'fold' if 'fold' in offered else 'call'
     else:
@@ -191,15 +201,21 @@ def main():
     parser.add_argument('--log', type=Path, help='append decisions and hand results as JSON lines')
     parser.add_argument('--max-minutes', type=float, help='stop after the first completed hand past this many minutes')
     args = parser.parse_args()
-    saved = load_checkpoint(args.checkpoint, model_id='bot-opponent-v1')
-    if saved.get('abstraction') != 'texture-buckets-v2':
-        parser.error('client requires a texture-buckets-v2 CFR checkpoint')
+    try:
+        saved = lean_cfr.load(args.checkpoint)
+    except ValueError:
+        saved = load_checkpoint(args.checkpoint, model_id='bot-opponent-v1')
+        if saved.get('abstraction') != 'texture-buckets-v2':
+            parser.error('client requires a lean-v3 or texture-buckets-v2 checkpoint')
     key = os.environ.get('OPEN_POKER_API_KEY')
     if not key:
         parser.error('set OPEN_POKER_API_KEY in the environment')
     logging.basicConfig(level=logging.INFO)
-    LOG.info('Checkpoint sha256=%s abstraction=%s iterations=%s fallback=check-fold-call',hashlib.sha256(args.checkpoint.read_bytes()).hexdigest(),saved['abstraction'],saved['iterations'])
-    policy = CFRPolicy(saved['sums'], args.seed, saved['abstraction'])
+    LOG.info('Checkpoint sha256=%s abstraction=%s iterations=%s',hashlib.sha256(args.checkpoint.read_bytes()).hexdigest(),saved['abstraction'],saved['iterations'])
+    if saved['abstraction'] == lean_cfr.VERSION:
+        policy = lean_cfr.LeanPolicy(saved['sums'], args.seed)
+    else:
+        policy = CFRPolicy(saved['sums'], args.seed, saved['abstraction'])
     try:
         asyncio.run(run(args, policy, key))
     except KeyboardInterrupt:

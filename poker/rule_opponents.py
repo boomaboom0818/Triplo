@@ -6,7 +6,7 @@ ready for anything; beating them is necessary, never sufficient, strength eviden
 from pokerkit import StandardHighHand
 
 RANKS = '23456789TJQKA'
-STYLES = ('tight-v1', 'aggressive-v1', 'station-v1')
+STYLES = ('tight-v1', 'aggressive-v1', 'station-v1', 'shover-v1')
 STRONG = ('Straight', 'Flush', 'Full house', 'Four of a kind', 'Straight flush')
 
 
@@ -47,6 +47,9 @@ class RulePolicy:
         style = self.style
         if not o.street:
             s = chen(o.hole)
+            if style == 'shover-v1':           # largest raise with any decent hand, else give up
+                if s >= 9: return raises[-1] if raises else 'call'
+                return passive
             if style == 'station-v1':
                 if s >= 10: return 'call'
                 return 'call' if s >= 5 and o.call <= 20 else passive
@@ -68,6 +71,8 @@ class RulePolicy:
         if strong:
             if style == 'station-v1': return 'call'
             return slot(2) if raises and o.call < o.pot else 'call'
+        if style == 'shover-v1':
+            return 'call' if top_pair else passive
         if style == 'station-v1':
             return 'call' if pair else passive
         if top_pair:

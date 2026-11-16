@@ -105,10 +105,20 @@ def resume(path):
 
 
 class LeanPolicy:
-    """Average-strategy player for lean checkpoints; check/fold when a state is unseen."""
-    def __init__(self, sums, seed=0):
+    """Average-strategy player for lean checkpoints.
+
+    States the training never produced (for example a 100bb all-in, which the lean
+    menu does not contain) are played by a fixed tight rule player instead of
+    folding everything: it calls big bets with premium hands and folds the rest.
+    """
+    abstraction = VERSION
+    menu = LEAN_MENU
+
+    def __init__(self, sums, seed=0, fallback='tight-v1'):
         from .lean_abstraction import observation_key
+        from .rule_opponents import RulePolicy
         self.sums, self.rng, self.key = sums, Random(seed), observation_key
+        self.fallback = RulePolicy(fallback)
         self.decisions = self.covered = 0
 
     def act(self, o):
@@ -117,4 +127,4 @@ class LeanPolicy:
         if row and len(row) == len(o.legal) and any(x > 0 for x in row):
             self.covered += 1
             return self.rng.choices(o.legal, row)[0]
-        return 'call' if not o.call else 'fold' if 'fold' in o.legal else 'call'
+        return self.fallback.act(o)

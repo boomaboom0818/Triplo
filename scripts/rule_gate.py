@@ -25,15 +25,16 @@ ALWAYS_FOLD_BB_PER_100 = -25.0
 def play_style(hero, style, deals, seed=SEED, lean=False):
     """Per-deal mean bb/100 of the hero over the six seat rotations.
 
-    lean=True plays the same deals on the fast engine with the lean raise menu,
-    which is the game lean checkpoints are trained on.
+    lean=True plays the same deals on the fast engine. The hero is offered the lean
+    raise menu it was trained on; opponents keep the full menu, including all-ins.
     """
     values, shoves = [], 0
     opponent = RulePolicy(style)
     for deal in range(deals):
         block = []
         for seat in range(6):
-            game = FastGame(seed + deal, lean=True) if lean else Game(seed + deal)
+            # Only the checkpoint seat (position (seat - 1) % 6) is limited to the lean menu.
+            game = FastGame(seed + deal, lean=1 << (seat - 1) % 6) if lean else Game(seed + deal)
             while game.live if lean else game.state.status:
                 o = game.observe()
                 action = (hero if o.player == seat else opponent).act(o)
