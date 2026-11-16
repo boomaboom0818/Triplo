@@ -24,7 +24,8 @@ from .sampled_cfr import SampledCFR
 ALGORITHM = 'history-linear-es-v1'
 PARALLEL_ALGORITHM = 'history-parallel-es-v1'
 MIXTURE_ALGORITHM = 'history-loose-mixture-es-v1'
-ALGORITHMS = (ALGORITHM, PARALLEL_ALGORITHM, MIXTURE_ALGORITHM)
+LIVE_ALGORITHM = 'history-live-mixture-es-v1'
+ALGORITHMS = (ALGORITHM, PARALLEL_ALGORITHM, MIXTURE_ALGORITHM, LIVE_ALGORITHM)
 VERSION = 'history-public-v1'
 COMPACT_VERSION = 'history-compact-v1'
 VERSIONS = (VERSION, COMPACT_VERSION)
@@ -116,8 +117,9 @@ class PokerState:
 
 class _HistoryWorker:
     """Multi-core worker traversing history-aware games against frozen shared arrays."""
-    def __init__(self, index, base, rng, stack_bb=100, population_probability=0., abstraction=COMPACT_VERSION):
+    def __init__(self, index, base, rng, stack_bb=100, population_probability=0., abstraction=COMPACT_VERSION, curriculum=None):
         self.index, self.base, self.rng = index, base, rng
+        self.curriculum = curriculum
         self.stack_bb = stack_bb
         self.population_probability = population_probability
         self.abstraction = abstraction
@@ -130,16 +132,28 @@ class _HistoryWorker:
 
     def iterate(self, weight):
         stacks = [2 * self.stack_bb] * PLAYERS
-        root = FastGame(self.rng.randrange(2 ** 63), PLAYERS, stacks=stacks, lean=True)
+        if self.curriculum:
+            from .live_curriculum import sample_root
+            root = sample_root(self.rng, self.curriculum)
+        else:
+            root = FastGame(self.rng.randrange(2 ** 63), PLAYERS, stacks=stacks, lean=True)
         population = self.population_probability > 0 and self.rng.random() < self.population_probability
         self.population_iterations += population
         for traverser in range(PLAYERS):
             self.fixed = {}
             if population:
-                seats = self.rng.sample([i for i in range(PLAYERS) if i != traverser], 3)
-                self.fixed = {i: LooseCaller(self.rng.randrange(len(PROFILES))) for i in seats}
+                eligible = [i for i in range(PLAYERS) if i != traverser and root.active[i]]
+                seats = self.rng.sample(eligible, min(3, len(eligible)))
+                if self.curriculum:
+                    from .live_curriculum import opponent
+                    self.fixed = {i: opponent(self.rng, self.curriculum) for i in seats}
+                else:
+                    self.fixed = {i: LooseCaller(self.rng.randrange(len(PROFILES))) for i in seats}
             self.cards = {}
-            self.walk(root.clone(), traverser, weight)
+            game = root.clone()
+            if self.curriculum:
+                game.lean = 63 & ~sum(1 << i for i in self.fixed)
+            self.walk(game, traverser, weight)
 
     def walk(self, game, traverser, weight):
         self.nodes += 1
@@ -205,21 +219,24 @@ def _work(job):
     gc.disable()
     solver = _SOLVER
     task = _HistoryWorker(solver.index, solver.regrets, Random(f'{seed}:{round_index}:{worker}'),
-                          solver.stack_bb, solver.population_probability, solver.abstraction)
+                          solver.stack_bb, solver.population_probability, solver.abstraction, solver.curriculum)
     for j in range(batch):
         task.iterate(start + j * workers + worker + 1)
     return task.regrets, task.sums, task.visits, task.nodes, task.population_iterations
 
 
 class ParallelHistory:
-    def __init__(self, seed=1, stack_bb=100, population_probability=0., abstraction=COMPACT_VERSION):
+    def __init__(self, seed=1, stack_bb=100, population_probability=0., abstraction=COMPACT_VERSION, curriculum=None):
         if type(stack_bb) is not int or not 2 <= stack_bb <= 200:
             raise ValueError('stack_bb must be an integer in [2, 200]')
         if not math.isfinite(population_probability) or not 0 <= population_probability <= 1:
             raise ValueError('population probability must be between zero and one')
         if abstraction not in VERSIONS:
             raise ValueError('unsupported history abstraction')
+        if curriculum not in (None, 'live-conditions-v1', 'live-aggressive-v2') or curriculum and abstraction != COMPACT_VERSION:
+            raise ValueError('live curriculum requires compact history abstraction')
         self.seed = seed
+        self.curriculum = curriculum
         self.stack_bb = stack_bb
         self.population_probability = population_probability
         self.abstraction = abstraction
@@ -278,7 +295,8 @@ class ParallelHistory:
 
     def meta(self):
         return dict(schema=1,
-                    algorithm=MIXTURE_ALGORITHM if self.population_probability else PARALLEL_ALGORITHM,
+                    algorithm=LIVE_ALGORITHM if self.curriculum else MIXTURE_ALGORITHM if self.population_probability else PARALLEL_ALGORITHM,
+                    curriculum=self.curriculum,
                     abstraction=self.abstraction, menu=LEAN_MENU, players=PLAYERS,
                     seed=self.seed, stack_bb=self.stack_bb, iterations=self.iterations,
                     nodes=self.nodes, rounds=self.rounds,
@@ -316,7 +334,7 @@ class ParallelHistory:
         if (meta.get('state_schema') != STATE_SCHEMA or meta.get('algorithm') not in ALGORITHMS
                 or meta.get('abstraction') not in VERSIONS or meta.get('menu') != LEAN_MENU):
             raise ValueError('incompatible parallel history state')
-        solver = cls(meta['seed'], meta['stack_bb'], meta.get('population_probability', 0.), meta['abstraction'])
+        solver = cls(meta['seed'], meta['stack_bb'], meta.get('population_probability', 0.), meta['abstraction'], meta.get('curriculum'))
         if meta['algorithm'] != solver.meta()['algorithm']:
             raise ValueError('incompatible population configuration')
         solver.population_iterations = meta.get('population_iterations', 0)

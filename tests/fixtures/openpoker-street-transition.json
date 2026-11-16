@@ -1,0 +1,256 @@
+{
+  "snapshot": {
+    "stream": "state",
+    "table_id": "7bca2faa-d0e7-4f2f-9c38-4bf5dd39b1f6",
+    "hand_id": "7ffca0d8-21ea-497f-bc6c-a94347880071",
+    "type": "table_state",
+    "street": "flop",
+    "dealer_seat": 4,
+    "small_blind": 10,
+    "big_blind": 20,
+    "pot": 120,
+    "actor_seat": 5,
+    "min_raise_to": 20,
+    "max_raise_to": 700,
+    "board": [
+      "Ks",
+      "Qh",
+      "5s"
+    ],
+    "seats": [
+      {
+        "seat": 0,
+        "stack": 6610,
+        "bet": 0,
+        "status": "active",
+        "in_hand": true,
+        "folded": false
+      },
+      {
+        "seat": 1,
+        "stack": 4960,
+        "bet": 0,
+        "status": "active",
+        "in_hand": true,
+        "folded": false
+      },
+      {
+        "seat": 2,
+        "stack": 0,
+        "bet": 0,
+        "status": "empty"
+      },
+      {
+        "seat": 3,
+        "stack": 2607,
+        "bet": 0,
+        "status": "active",
+        "in_hand": true,
+        "folded": true
+      },
+      {
+        "seat": 4,
+        "stack": 1540,
+        "bet": 0,
+        "status": "active",
+        "in_hand": true,
+        "folded": true
+      },
+      {
+        "seat": 5,
+        "stack": 700,
+        "bet": 0,
+        "status": "active",
+        "in_hand": true,
+        "folded": false
+      }
+    ],
+    "hero": {
+      "seat": 5,
+      "hole_cards": [
+        "Tc",
+        "2c"
+      ],
+      "valid_actions": [
+        {
+          "action": "fold"
+        },
+        {
+          "action": "check"
+        },
+        {
+          "action": "raise",
+          "min": 20,
+          "max": 700
+        },
+        {
+          "action": "all_in",
+          "amount": 700
+        }
+      ]
+    },
+    "table_seq": 25249,
+    "hand_seq": 60
+  },
+  "replayed_events": [
+    {
+      "stream": "event",
+      "table_id": "7bca2faa-d0e7-4f2f-9c38-4bf5dd39b1f6",
+      "hand_id": "7ffca0d8-21ea-497f-bc6c-a94347880071",
+      "table_seq": 25194,
+      "hand_seq": 5,
+      "type": "hand_start",
+      "seat": 5,
+      "dealer_seat": 4,
+      "blinds": {
+        "small_blind": 10,
+        "big_blind": 20
+      }
+    },
+    {
+      "stream": "event",
+      "table_id": "7bca2faa-d0e7-4f2f-9c38-4bf5dd39b1f6",
+      "hand_id": "7ffca0d8-21ea-497f-bc6c-a94347880071",
+      "table_seq": 25210,
+      "hand_seq": 21,
+      "type": "player_action",
+      "seat": 1,
+      "action": "call",
+      "amount": null,
+      "reason": null,
+      "amount_mode": "incremental",
+      "street": "preflop",
+      "stack": 4980,
+      "pot": 50,
+      "pot_before": 30,
+      "pot_after": 50,
+      "to_call_before": 20,
+      "stack_before": 5000,
+      "stack_after": 4980,
+      "contribution_delta": 20,
+      "player_stack_before": 5000,
+      "player_stack_after": 4980
+    },
+    {
+      "stream": "event",
+      "table_id": "7bca2faa-d0e7-4f2f-9c38-4bf5dd39b1f6",
+      "hand_id": "7ffca0d8-21ea-497f-bc6c-a94347880071",
+      "table_seq": 25216,
+      "hand_seq": 27,
+      "type": "player_action",
+      "seat": 3,
+      "action": "fold",
+      "amount": null,
+      "reason": null,
+      "amount_mode": "incremental",
+      "street": "preflop",
+      "stack": 2607,
+      "pot": 50,
+      "pot_before": 50,
+      "pot_after": 50,
+      "to_call_before": 20,
+      "stack_before": 2607,
+      "stack_after": 2607,
+      "contribution_delta": 0,
+      "player_stack_before": 2607,
+      "player_stack_after": 2607
+    },
+    {
+      "stream": "event",
+      "table_id": "7bca2faa-d0e7-4f2f-9c38-4bf5dd39b1f6",
+      "hand_id": "7ffca0d8-21ea-497f-bc6c-a94347880071",
+      "table_seq": 25222,
+      "hand_seq": 33,
+      "type": "player_action",
+      "seat": 4,
+      "action": "fold",
+      "amount": null,
+      "reason": null,
+      "amount_mode": "incremental",
+      "street": "preflop",
+      "stack": 1540,
+      "pot": 50,
+      "pot_before": 50,
+      "pot_after": 50,
+      "to_call_before": 20,
+      "stack_before": 1540,
+      "stack_after": 1540,
+      "contribution_delta": 0,
+      "player_stack_before": 1540,
+      "player_stack_after": 1540
+    },
+    {
+      "stream": "event",
+      "table_id": "7bca2faa-d0e7-4f2f-9c38-4bf5dd39b1f6",
+      "hand_id": "7ffca0d8-21ea-497f-bc6c-a94347880071",
+      "table_seq": 25230,
+      "hand_seq": 41,
+      "type": "player_action",
+      "seat": 5,
+      "action": "raise",
+      "amount": 40,
+      "reason": null,
+      "amount_mode": "to_total",
+      "street": "preflop",
+      "stack": 700,
+      "pot": 80,
+      "pot_before": 50,
+      "pot_after": 80,
+      "to_call_before": 10,
+      "stack_before": 730,
+      "stack_after": 700,
+      "contribution_delta": 30,
+      "player_stack_before": 730,
+      "player_stack_after": 700
+    },
+    {
+      "stream": "event",
+      "table_id": "7bca2faa-d0e7-4f2f-9c38-4bf5dd39b1f6",
+      "hand_id": "7ffca0d8-21ea-497f-bc6c-a94347880071",
+      "table_seq": 25236,
+      "hand_seq": 47,
+      "type": "player_action",
+      "seat": 0,
+      "action": "call",
+      "amount": null,
+      "reason": null,
+      "amount_mode": "incremental",
+      "street": "preflop",
+      "stack": 6610,
+      "pot": 100,
+      "pot_before": 80,
+      "pot_after": 100,
+      "to_call_before": 20,
+      "stack_before": 6630,
+      "stack_after": 6610,
+      "contribution_delta": 20,
+      "player_stack_before": 6630,
+      "player_stack_after": 6610
+    },
+    {
+      "stream": "event",
+      "table_id": "7bca2faa-d0e7-4f2f-9c38-4bf5dd39b1f6",
+      "hand_id": "7ffca0d8-21ea-497f-bc6c-a94347880071",
+      "table_seq": 25242,
+      "hand_seq": 53,
+      "type": "player_action",
+      "seat": 1,
+      "action": "call",
+      "amount": null,
+      "reason": null,
+      "amount_mode": "incremental",
+      "street": "flop",
+      "stack": 4960,
+      "pot": 120,
+      "pot_before": 100,
+      "pot_after": 120,
+      "to_call_before": 20,
+      "stack_before": 4980,
+      "stack_after": 4960,
+      "contribution_delta": 20,
+      "player_stack_before": 4980,
+      "player_stack_after": 4960
+    }
+  ],
+  "to_table_seq": 25250
+}

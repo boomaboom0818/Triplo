@@ -26,13 +26,17 @@ def batch_size(iterations, workers):
 
 
 def train(root, minutes, seed=1, stack_bb=20, resuming=False, max_rows=500000,
-          workers=1, population=0., abstraction=VERSION, save_minutes=5, snapshots=()):
+          workers=1, population=0., abstraction=VERSION, save_minutes=5, snapshots=(), curriculum=None, initialize_from=None):
     if not 0 < minutes <= 24 * 60 or type(stack_bb) is not int or not 2 <= stack_bb <= 200:
         raise ValueError('minutes must be in (0,1440], stack_bb an integer in [2,200]')
     if type(max_rows) is not int or max_rows < 1:
         raise ValueError('positive row limit required')
     if type(workers) is not int or not 1 <= workers <= max(1, (os.cpu_count() or 1) - 1):
         raise ValueError('workers must be between 1 and cpu_count - 1')
+    if curriculum not in (None, 'live-conditions-v1', 'live-aggressive-v2') or curriculum and abstraction != COMPACT_VERSION:
+        raise ValueError('live curriculum requires compact abstraction')
+    if initialize_from and (resuming or curriculum is None):
+        raise ValueError('initialization requires a new curriculum run')
     if abstraction not in VERSIONS:
         raise ValueError('unsupported history abstraction')
     mem_limit = (10 if workers > 1 else 4) * 1024 ** 3
@@ -97,10 +101,16 @@ def train(root, minutes, seed=1, stack_bb=20, resuming=False, max_rows=500000,
         if resuming:
             solver = ParallelHistory.load_state(state_dir)
             if (solver.seed != seed or solver.stack_bb != stack_bb
-                    or solver.population_probability != population or solver.abstraction != abstraction):
+                    or solver.population_probability != population or solver.abstraction != abstraction or solver.curriculum != curriculum):
                 raise ValueError('resume configuration mismatch')
+        elif initialize_from:
+            solver = ParallelHistory.load_state(initialize_from)
+            if solver.abstraction != abstraction:
+                raise ValueError('initialization abstraction mismatch')
+            solver.seed, solver.stack_bb = seed, stack_bb
+            solver.population_probability, solver.curriculum = population, curriculum
         else:
-            solver = ParallelHistory(seed, stack_bb, population, abstraction)
+            solver = ParallelHistory(seed, stack_bb, population, abstraction, curriculum)
         start_iterations, start_nodes = solver.iterations, solver.nodes
         start = time.monotonic()
         end = start + 60 * minutes
@@ -121,7 +131,7 @@ def train(root, minutes, seed=1, stack_bb=20, resuming=False, max_rows=500000,
             (root / 'progress.json').write_text(json.dumps(dict(
                 status=status, stop_reason=reason, iterations=solver.iterations, nodes=solver.nodes,
                 rows=len(solver.index), rounds=solver.rounds, workers=workers, stack_bb=stack_bb,
-                abstraction=abstraction, population_probability=population,
+                abstraction=abstraction, population_probability=population, curriculum=curriculum,
                 population_iterations=solver.population_iterations,
                 seconds=elapsed, pid=os.getpid(),
                 iterations_per_second=(solver.iterations - start_iterations) / max(elapsed, 1e-9),
@@ -174,8 +184,10 @@ if __name__ == '__main__':
     p.add_argument('--abstraction', choices=VERSIONS, default=VERSION)
     p.add_argument('--save-minutes', type=float, default=5)
     p.add_argument('--snapshots', type=int, nargs='*', default=[])
+    p.add_argument('--curriculum', choices=['live-conditions-v1', 'live-aggressive-v2'])
+    p.add_argument('--initialize-from', type=Path, help='fork optimizer state into a new curriculum run; source is never written')
     p.add_argument('--resume', action='store_true')
     a = p.parse_args()
     train(a.root, a.minutes, a.seed, a.stack_bb, a.resume, a.max_rows,
-          a.workers, a.population, a.abstraction, a.save_minutes, a.snapshots)
+          a.workers, a.population, a.abstraction, a.save_minutes, a.snapshots, a.curriculum, a.initialize_from)
 
