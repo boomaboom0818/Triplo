@@ -6,6 +6,7 @@ accumulated at sampled opponent nodes. No importance weights anywhere, so no
 update can dominate the average. No multiplayer equilibrium guarantee.
 """
 import json
+import math
 import os
 from pathlib import Path
 from random import Random
@@ -14,6 +15,8 @@ from .fast_game import FastGame, LEAN_MENU
 from .lean_abstraction import VERSION, card_features, lean_key
 
 ALGORITHM = 'lean-linear-es-mccfr-v1'
+MIXTURE_ALGORITHM = 'lean-loose-mixture-es-mccfr-v1'
+ALGORITHMS = (ALGORITHM, MIXTURE_ALGORITHM)
 PLAYERS = 6
 
 
@@ -88,7 +91,7 @@ class LeanCFR:
 
 def load(path):
     saved = json.loads(Path(path).read_text())
-    if (saved.get('schema') != 1 or saved.get('algorithm') != ALGORITHM or saved.get('abstraction') != VERSION
+    if (saved.get('schema') != 1 or saved.get('algorithm') not in ALGORITHMS or saved.get('abstraction') != VERSION
             or saved.get('menu') != LEAN_MENU or saved.get('players') != PLAYERS):
         raise ValueError('incompatible lean checkpoint')
     return saved
@@ -96,6 +99,8 @@ def load(path):
 
 def resume(path):
     saved = load(path)
+    if saved['algorithm'] != ALGORITHM:
+        raise ValueError('mixture checkpoints require the parallel trainer')
     solver = LeanCFR(saved['seed'])
     state = saved['rng']
     solver.rng.setstate((state[0], tuple(state[1]), state[2]))
@@ -114,17 +119,39 @@ class LeanPolicy:
     abstraction = VERSION
     menu = LEAN_MENU
 
-    def __init__(self, sums, seed=0, fallback='tight-v1'):
+    def __init__(self, sums, seed=0, fallback='tight-v1', min_average_mass=0.):
         from .lean_abstraction import observation_key
         from .rule_opponents import RulePolicy
         self.sums, self.rng, self.key = sums, Random(seed), observation_key
         self.fallback = RulePolicy(fallback)
+        if not math.isfinite(min_average_mass) or min_average_mass < 0:
+            raise ValueError('minimum average mass must be finite and nonnegative')
+        self.min_average_mass = min_average_mass
         self.decisions = self.covered = 0
+        self.thin = 0
+
+    @classmethod
+    def from_checkpoint(cls, saved, seed=0, min_support=0.):
+        """Optional fallback for sparse rows, preserving the default policy.
+
+        Support is linear average mass / sum(1..iterations), NOT a visit count
+        or effective sample size. Multiple traversals can contribute per deal.
+        This heuristic must be evaluated against both raw and fallback policies.
+        """
+        if not math.isfinite(min_support) or min_support < 0:
+            raise ValueError('minimum support must be finite and nonnegative')
+        iterations = saved['iterations']
+        if type(iterations) is not int or iterations < 0:
+            raise ValueError('invalid checkpoint iterations')
+        return cls(saved['sums'], seed, min_average_mass=min_support * iterations * (iterations + 1) / 2)
 
     def act(self, o):
         row = self.sums.get(self.key(o))
         self.decisions += 1
         if row and len(row) == len(o.legal) and any(x > 0 for x in row):
+            if sum(row) < self.min_average_mass:
+                self.thin += 1
+                return self.fallback.act(o)
             self.covered += 1
             return self.rng.choices(o.legal, row)[0]
         return self.fallback.act(o)

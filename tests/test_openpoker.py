@@ -128,3 +128,17 @@ def test_lean_policy_gets_lean_menu_and_rule_fallback():
     s['seats'][2]['stack'] = 75; s['hero']['valid_actions'][2] = dict(action='raise', min=40, max=75)
     decision(s, policy)
     assert seen[-1].legal == ('call', 'fold', 4, 5, 8)
+
+
+def test_sparse_lean_row_is_logged_as_fallback():
+    from poker.fast_game import FastGame
+    from poker.lean_abstraction import observation_key
+    from poker.lean_cfr import LeanPolicy
+    import dataclasses
+    o = dataclasses.replace(FastGame(1, lean=True).observe(), hole=('7s', '2h'))
+    saved = dict(iterations=10, sums={observation_key(o): [0., 0., 0., 1.]})
+    policy = LeanPolicy.from_checkpoint(saved, min_support=2 / 55)
+    s = snapshot()
+    s['hero']['hole_cards'] = ['7s', '2h']
+    assert decision(s, policy)['action'] == 'fold'
+    assert not decision.last['covered'] and policy.thin == 1

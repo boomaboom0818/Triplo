@@ -20,6 +20,11 @@ CI runs the suite and baseline/CFR smoke workflows.
 
 ## Train the bot
 
+For the newer lean trainer's multiway-coverage diagnosis and controlled
+loose-caller experiment, see [the mixture pilot](docs/LEAN-MIXTURE-PILOT.md).
+Its candidates remain experimental; the measured improvement does not yet
+establish an advantage over the tight rule baseline.
+
 See the complete [training runbook](docs/TRAINING.md) for resource controls,
 recovery, separate validation training, staged experiments and limitations.
 
@@ -113,3 +118,13 @@ project implementations informed by [Lanctot et al.'s MCCFR paper](https://www.m
 and [Brown and Sandholm's Pluribus paper](https://noambrown.com/papers/19-Science-Superhuman.pdf).
 This is not a Pluribus reproduction. Python was chosen for an inspectable reference;
 profile throughput, table growth and learning before budgeting larger compute.
+
+## History-aware experimental model
+
+[History-001](docs/HISTORY-001.md) adds public betting history, a learning kernel
+validated on Kuhn poker, resumable bounded training, local evaluation, and basic
+play guards with a tight-rule fallback. The first short Hold'em pilot did not
+establish learned improvement; guarded play used the fallback throughout. New
+history checkpoints use a separate format. The [river/history work](docs/RIVER-003.md)
+adds verified OpenPoker history reconstruction and demonstrates learning in bounded
+heads-up river games. See those reports for commands and measured limitations.
