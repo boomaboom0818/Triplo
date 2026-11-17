@@ -87,3 +87,14 @@ Reports retain source hashes, per-deal outcomes, paired differences, pointwise
 95% normal intervals, and postflop decision latency. These are weak fixed-opponent
 screens, not proof of OpenPoker profitability. Preserve reports and avoid tuning
 on a confirmation seed and continuing to describe it as held out.
+
+Decision records include `decision_source`: `learned_policy`, `poker_safeguard`,
+`preflop_rules`, `equity_fallback`, `rule_fallback`, or `safety_fallback`.
+`covered` retains its existing meaning (a learned row supplied the action).
+A safeguard can supersede learned play, so `covered: false` alone does not imply
+that Monte Carlo equity was used. These diagnostics are never sent on the wire.
+
+The equity range model now classifies top pair by the rank actually paired with
+the board, rather than the highest hole-card kicker. Overpairs remain in the
+same weight tier. This corrects range evidence; it does not establish a win-rate
+improvement or add sequential opponent modeling.

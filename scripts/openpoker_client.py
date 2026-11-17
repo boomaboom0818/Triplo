@@ -87,10 +87,12 @@ def decision(snapshot, policy, public_history=(), history_complete=None):
     key = policy.key(observation) if hasattr(policy, 'key') else information_key(observation, policy.abstraction)
     row = policy.sums.get(key)
     covered = bool(row and any(row))
+    source = 'learned_policy'
     # Unseen states should not silently become uniform random raises.
     if hasattr(policy, 'fallback'):
         # Lean policies answer unseen states themselves with a tight rule player.
         before = getattr(policy, 'covered', 0)
+        safeguards_before = getattr(policy, 'safeguards', 0)
         if hasattr(policy.fallback, 'last'):
             policy.fallback.last = None
         if isinstance(policy, history_cfr.HistoryPolicy):
@@ -98,7 +100,13 @@ def decision(snapshot, policy, public_history=(), history_complete=None):
         else:
             action = policy.act(observation)
         covered = getattr(policy, 'covered', 0) > before
+        if getattr(policy, 'safeguards', 0) > safeguards_before:
+            source = 'poker_safeguard'
+        elif not covered:
+            from poker.equity_policy import EquityPolicy
+            source = ('preflop_rules' if not street else 'equity_fallback') if isinstance(policy.fallback, EquityPolicy) else 'rule_fallback'
     elif row is None or not any(row):
+        source = 'safety_fallback'
         LOG.warning('Uncovered state: using check/fold/call fallback')
         action = 'call' if passive == 'check' else 'fold' if 'fold' in offered else 'call'
     else:
@@ -106,7 +114,7 @@ def decision(snapshot, policy, public_history=(), history_complete=None):
     LOG.info('Decision street=%s active=%s covered=%s action=%s',street,sum(observation.active),covered,wire[action]['action'])
     # Diagnostics for the optional session log; never sent on the wire.
     decision.last = dict(hand_id=hand, seat=hero['seat'], street=street, active=sum(observation.active),
-                         covered=covered, action=wire[action]['action'], amount=wire[action].get('amount'))
+                         covered=covered, decision_source=source, action=wire[action]['action'], amount=wire[action].get('amount'))
     if isinstance(policy, history_cfr.HistoryPolicy):
         decision.last['history_verified'] = history_complete is True
         decision.last['history_length'] = len(public_history)

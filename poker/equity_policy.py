@@ -33,7 +33,8 @@ def holding_range(known, board, preflop_raise, pressure):
         if pressure:
             category = evaluate((a, b) + board) >> 20
             own_pair = a >> 2 == b >> 2 or any(c >> 2 in (a >> 2, b >> 2) for c in board)
-            top_pair = own_pair and max(a >> 2, b >> 2) >= top
+            top_pair = (a >> 2 == top or b >> 2 == top
+                        or a >> 2 == b >> 2 > top)
             # A broad value/bluff mixture. Board-only hands are not private strength.
             strength = 1.0 if category >= 4 or category >= 2 and own_pair else .65 if top_pair else .25 if own_pair else .12
             weight *= strength ** min(pressure, 2)

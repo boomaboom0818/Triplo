@@ -111,7 +111,7 @@ def test_session_log_records_diagnostics_without_changing_wire_payload(tmp_path)
     from scripts.openpoker_client import record
     action = decision(snapshot(), CFRPolicy({}, abstraction='texture-buckets-v2'))
     assert set(action) == {'type', 'hand_id', 'turn_token', 'client_action_id', 'action'}
-    assert decision.last == dict(hand_id='h1', seat=2, street=0, active=6, covered=False, action='fold', amount=None)
+    assert decision.last == dict(hand_id='h1', seat=2, street=0, active=6, covered=False, decision_source='safety_fallback', action='fold', amount=None)
     record(None, type='ignored')
     log = tmp_path / 'session.jsonl'
     record(log, type='decision', **decision.last)
