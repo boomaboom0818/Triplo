@@ -140,11 +140,20 @@ class PressureGuard:
     only explicitly in a candidate checkpoint and measure before promotion.
     """
     VERSION = 'equity-pressure-v1'
+    VERSIONS = (VERSION, 'equity-pressure-preflop-v1', 'equity-pressure-postflop-v1')
 
-    def __init__(self):
+    def __init__(self, version=VERSION):
+        if version not in self.VERSIONS:
+            raise ValueError('unknown history decision guard')
+        self.version = version
         self.equity = EquityPolicy()
+        self.last_proposed = None
 
     def act(self, o, proposed):
+        self.last_proposed = proposed
+        if ((o.street and self.version == 'equity-pressure-preflop-v1') or
+                (not o.street and self.version == 'equity-pressure-postflop-v1')):
+            return proposed
         if proposed == 'fold' or not o.call or 'fold' not in o.legal:
             return proposed
         if not o.street:

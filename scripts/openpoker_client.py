@@ -277,6 +277,8 @@ def main():
                         help='history model: minimum sampled average visits before using a learned row')
     parser.add_argument('--fallback', choices=('tight-v1', 'equity-v1'), default='tight-v1',
                         help='rule fallback for history/lean policies; equity-v1 uses bounded range sampling')
+    parser.add_argument('--preflop-commitment', action='store_true',
+                        help='cap total preflop investment at the tight chart for verified histories (experimental)')
     parser.add_argument('--trace', type=Path, help='optional redacted public events and replay snapshots for diagnostics')
     parser.add_argument('--log', type=Path, help='append decisions and hand results as JSON lines')
     parser.add_argument('--max-minutes', type=float, help='stop after the first completed hand past this many minutes')
@@ -300,8 +302,10 @@ def main():
     if saved['abstraction'] in history_cfr.VERSIONS:
         if args.min_support != 0:
             parser.error('--min-support requires a lean checkpoint')
-        policy = history_cfr.HistoryPolicy(saved, args.seed, args.min_visits)
-        LOG.info('History model: learned rows require verified replay and min_visits=%s', args.min_visits)
+        policy = history_cfr.HistoryPolicy(saved, args.seed, args.min_visits,
+                                           preflop_commitment=args.preflop_commitment)
+        LOG.info('History model: learned rows require verified replay and min_visits=%s commitment=%s',
+                 args.min_visits, args.preflop_commitment)
     elif saved['abstraction'] == lean_cfr.VERSION:
         policy = lean_cfr.LeanPolicy.from_checkpoint(saved, args.seed, args.min_support)
         LOG.info('Sparse-row fallback min_support=%s', args.min_support)
@@ -309,6 +313,8 @@ def main():
         if args.min_support != 0:
             parser.error('--min-support requires a lean checkpoint')
         policy = CFRPolicy(saved['sums'], args.seed, saved['abstraction'])
+    if args.preflop_commitment and not isinstance(policy, history_cfr.HistoryPolicy):
+        parser.error('--preflop-commitment requires a history checkpoint')
     if args.fallback == 'equity-v1':
         if not hasattr(policy, 'fallback'):
             parser.error('--fallback equity-v1 requires a history or lean checkpoint')

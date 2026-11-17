@@ -71,3 +71,36 @@ def test_audited_aq_river_raise_is_vetoed_and_nuts_still_take_precedence():
     policy.visits[observation_key(nuts)] = 100
     assert policy.act(nuts, history_complete=True) == 153
     assert policy.pressure_overrides == 1
+
+
+def test_ablation_variants_only_touch_their_designated_streets(monkeypatch):
+    events = ((0, 2, 0, 6, 3, 2), (1, 3, 0, 20, 9, 6))
+    pre = observation(hole=('Ks', '8s'), call=20, pot=29,
+                      legal=('fold', 'call', 60), history=events)
+    post = replace(pre, street=1, board=('9h', 'Jc', '3c'))
+    pre_guard = PressureGuard('equity-pressure-preflop-v1')
+    post_guard = PressureGuard('equity-pressure-postflop-v1')
+    for guard in (pre_guard, post_guard):
+        monkeypatch.setattr(guard.equity, 'act', lambda o: 'fold')
+    assert pre_guard.act(pre, 60) == 'fold'
+    assert pre_guard.act(post, 60) == 60
+    assert post_guard.act(pre, 60) == 60
+    assert post_guard.act(post, 60) == 'fold'
+
+
+def test_exported_ablation_checkpoint_preserves_base_and_variant(tmp_path):
+    import json
+    from poker.history_cfr import ParallelHistory, load
+    from scripts.export_pressure_guard import run
+    base = tmp_path / 'base.json'
+    out = tmp_path / 'pre.json'
+    ParallelHistory().export_policy(base)
+    before = base.read_bytes()
+    run(base, out, 'equity-pressure-preflop-v1')
+    saved = load(out)
+    policy = HistoryPolicy(saved)
+    assert policy.pressure_guard.version == 'equity-pressure-preflop-v1'
+    assert saved['sums'] == json.loads(before)['sums']
+    assert base.read_bytes() == before
+    with pytest.raises(ValueError, match='preserve'):
+        run(base, out)

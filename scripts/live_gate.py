@@ -42,8 +42,8 @@ def digest(path):
     return h.hexdigest()
 
 
-def make_policy(saved, learned=True):
-    p=HistoryPolicy(saved, min_visits=64, learned=learned)
+def make_policy(saved, learned=True, preflop_commitment=False):
+    p=HistoryPolicy(saved, min_visits=64, learned=learned, preflop_commitment=preflop_commitment)
     p.fallback=EquityPolicy()
     return p
 
@@ -54,8 +54,10 @@ _EVAL = None
 def _evaluate_case(job):
     hero, opponent_saved, seed, deals = _EVAL
     initial_overrides = hero.pressure_overrides
+    initial_commitment = hero.commitment_overrides
     case_index, (name, players, stacks, style) = job
     blocks=[];latencies=[];learned=decisions=post_learned=post_decisions=0
+    hand_payoffs=[];worst_hands=[];overrides_by_street=[0]*4
     positions=[0,1]+list(range(8-players,6))
     opponents=[make_policy(opponent_saved) if style=='incumbent' else
                RulePolicy(('tight-v1','aggressive-v1','station-v1')[i%3] if style=='mixed' else style)
@@ -63,6 +65,7 @@ def _evaluate_case(job):
     for deal in range(deals):
         outcomes=[]
         for position in positions:
+            hand_trace=[]
             deal_seed=seed+case_index*100000+deal
             game=root_game(deal_seed,players,list(stacks),lean=True if style=='incumbent' else 1<<position)
             # Independent RNG per player, reset per duplicate deal/hero role.
@@ -72,36 +75,51 @@ def _evaluate_case(job):
             while game.live:
                 o=game.observe()
                 if o.position==position:
-                    before=hero.covered;start=time.perf_counter()
+                    before=hero.covered;overrides_before=hero.pressure_overrides;start=time.perf_counter()
                     action=hero.act(o,history_complete=True)
                     latencies.append(time.perf_counter()-start)
                     used=hero.covered-before
+                    overridden=hero.pressure_overrides>overrides_before
+                    if overridden:overrides_by_street[o.street]+=1
+                    hand_trace.append(dict(street=o.street,hole=o.hole,board=o.board,pot=o.pot,
+                        call=o.call,stacks=o.stacks,active=o.active,history=o.history,legal=o.legal,
+                        action=action,learned=bool(used),key=hero.key(o),overridden=overridden,
+                        proposed=hero.pressure_guard.last_proposed if overridden else action,
+                        equity=hero.pressure_guard.equity.last if overridden else None))
                     decisions+=1;learned+=used
                     if o.street:post_decisions+=1;post_learned+=used
                 else:action=opponents[o.position].act(o)
                 game.act(action)
             outcomes.append(game.payoffs[position]/2)
+            worst_hands.append(dict(deal=deal,position=position,payoff_bb=outcomes[-1],decisions=hand_trace))
+            worst_hands.sort(key=lambda h:h['payoff_bb'])
+            del worst_hands[10:]
         blocks.append(mean(outcomes)*100)
+        hand_payoffs.append(outcomes)
     latencies.sort()
     result=dict(blocks=blocks,bb_per_100=mean(blocks),hands=players*deals,
         decisions=decisions,learned=learned,postflop_decisions=post_decisions,postflop_learned=post_learned,
         p99_seconds=latencies[int(.99*(len(latencies)-1))] if latencies else 0,
         maximum_seconds=max(latencies,default=0))
     result['pressure_overrides'] = hero.pressure_overrides - initial_overrides
+    result['commitment_overrides'] = hero.commitment_overrides - initial_commitment
+    result.update(hand_payoffs=hand_payoffs,positions=positions,worst_hands=worst_hands,
+                  overrides_by_street=overrides_by_street)
     return name, result
 
 
-def evaluate(checkpoint, incumbent, out, seed, deals, fallback=False):
+def evaluate(checkpoint, incumbent, out, seed, deals, fallback=False, preflop_commitment=False):
     if deals<2 or Path(out).exists():raise ValueError('need >=2 deals and a new output')
     incumbent=Path(incumbent); checkpoint=Path(checkpoint)
     saved=load(checkpoint) if not fallback else dict(sums={},visits={},stack_bb=100,abstraction=COMPACT_VERSION)
-    hero=make_policy(saved,not fallback)
+    hero=make_policy(saved,not fallback,preflop_commitment=preflop_commitment)
     opponent_saved=saved if checkpoint.resolve()==incumbent.resolve() and not fallback else load(incumbent)
     report=dict(schema=1,checkpoint=str(checkpoint),checkpoint_sha256=None if fallback else digest(checkpoint),
                 incumbent_sha256=digest(incumbent),fallback_only=fallback,seed=seed,deals=deals,min_visits=64,
-                fallback='equity-v1',scenarios=SCENARIOS,cases={})
+                fallback='equity-v1',preflop_commitment=bool(preflop_commitment),scenarios=SCENARIOS,cases={})
     report['source_sha256']={p:digest(p) for p in ('scripts/live_gate.py','poker/history_cfr.py',
-        'poker/equity_policy.py','poker/live_curriculum.py','poker/fast_game.py','poker/rule_opponents.py')}
+        'poker/equity_policy.py','poker/preflop_commitment.py','poker/live_curriculum.py',
+        'poker/fast_game.py','poker/rule_opponents.py')}
     global _EVAL
     _EVAL=(hero,opponent_saved,seed,deals)
     try:
@@ -126,6 +144,8 @@ def assess(candidate, incumbent, fallback, confirmation=True, family_alpha=FAMIL
     for control in (incumbent,fallback):
         for field in ('seed','deals','min_visits','fallback','incumbent_sha256','scenarios','source_sha256'):
             if candidate[field]!=control[field]:raise ValueError('incompatible paired reports: '+field)
+        if candidate.get('preflop_commitment', False)!=control.get('preflop_commitment', False):
+            raise ValueError('incompatible paired reports: preflop_commitment')
     if incumbent['checkpoint_sha256']!=candidate['incumbent_sha256'] or not fallback['fallback_only'] or candidate['fallback_only']:
         raise ValueError('incorrect champion/fallback controls')
     names=list(candidate['cases'])
@@ -164,9 +184,10 @@ def main():
     p=argparse.ArgumentParser();sub=p.add_subparsers(dest='command',required=True)
     e=sub.add_parser('evaluate');e.add_argument('--checkpoint',type=Path,required=True);e.add_argument('--incumbent',type=Path,required=True)
     e.add_argument('--out',type=Path,required=True);e.add_argument('--seed',type=int,required=True);e.add_argument('--deals',type=int,required=True);e.add_argument('--fallback-only',action='store_true')
+    e.add_argument('--preflop-commitment',action='store_true')
     a=sub.add_parser('assess');a.add_argument('--candidate',type=Path,required=True);a.add_argument('--incumbent',type=Path,required=True);a.add_argument('--fallback',type=Path,required=True);a.add_argument('--out',type=Path,required=True);a.add_argument('--screen',action='store_true')
     args=p.parse_args()
-    if args.command=='evaluate':evaluate(args.checkpoint,args.incumbent,args.out,args.seed,args.deals,args.fallback_only)
+    if args.command=='evaluate':evaluate(args.checkpoint,args.incumbent,args.out,args.seed,args.deals,args.fallback_only,args.preflop_commitment)
     else:
         reports=[json.loads(p.read_text()) for p in (args.candidate,args.incumbent,args.fallback)]
         result=assess(*reports,confirmation=not args.screen)

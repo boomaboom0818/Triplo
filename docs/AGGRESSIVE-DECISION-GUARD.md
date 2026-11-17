@@ -92,6 +92,45 @@ added, and reserved validation/confirmation seeds remain unused. This is a teste
 candidate solution to the observed high-commitment decisions, not a completed
 strength promotion.
 
+## Ablation and the repeated-reraise cap
+
+The same development suite was rerun with the preflop guard only, the postflop
+guard only, and both. Suite means were 50.8, 33.2 and 55.4 bb/100. The unchanged
+checkpoint remained 26.7. Both streets contribute. Neither variant, nor both
+together, cleared the promotion gate (`runs/bot/guard-ablation-001/result.json`,
+eligible list empty).
+
+Paired traces show two different failures. Against 50-BB aggressive opponents the
+guard sometimes folds a continuation the incumbent called and won. Against
+100-BB tight opponents the fallback does the opposite: each new 4-chip reraise
+is under the chart's per-decision cap, so T9s, QJo, 77 and J9s call about fifty
+times and lose 100 BB. Replaying those four hands with a total-investment cap
+(3 BB for Chen 7–8, 10 BB for Chen 9–11) changes them from −100 BB to about −2
+or −3 BB. Premiums are uncapped. Learned hands below the chart's continuing
+range are not rewritten; a broader cap that also folded those hands lowered the
+deep-stack and short-handed results and was rejected.
+
+On the full suite the narrower cap, added to the both-guard candidate, moved the
+mean from 55.4 to 58.6 bb/100. The paired difference is +3.2 bb/100 with standard
+error 3.5, so an improvement over the guard itself is not established. The
+100-BB tight case rose by 18.9 (error 15.9). The same cap on the live incumbent,
+without the pressure guard, moved that checkpoint from 28.6 to 33.5 (paired
++4.9, error 6.5) and left the 100-BB tight result near −58. The equity fallback
+barely moved (+0.8, error 2.1). Against the existing controls the guarded-and-capped
+candidate's suite advantage is +30.0 over the incumbent (error 10.1) and +10.5
+over the fallback (error 11.3). That still does not clear the family-wise
+promotion bounds, and the 50-BB tight point estimate is lower than the uncapped
+guard.
+
+Do not enable the cap live yet. It is opt-in: `HistoryPolicy(..., preflop_commitment=True)`,
+`scripts.live_gate evaluate --preflop-commitment`, and
+`scripts.openpoker_client --preflop-commitment`. It applies only when the caller
+attests that the public history is complete. Artifacts:
+
+- `runs/bot/commitment-002/development-{both,incumbent,fallback}.json`
+- Rejected broader cap: `runs/bot/commitment-001/`
+
+
 Local artifacts under ignored `runs/`:
 
 - `runs/bot/recent-average-001/{development,assessment}.json`

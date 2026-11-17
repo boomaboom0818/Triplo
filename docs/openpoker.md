@@ -75,6 +75,14 @@ retains supported made-hand value bets, and preserves the old preflop baseline.
 It does not implement opponent learning, future betting search, or side-pot EV.
 Its sampling error is not uncertainty about the correctness of its range priors.
 
+`--preflop-commitment` is an experimental history-checkpoint option. On a verified
+public ledger it caps total preflop investment at the tight chart: 3 BB for Chen
+scores 7–8 and 10 BB for scores 9–11. Premiums and weaker learned hands are
+unchanged. Leave it off for deployment. Development measurement fixed specific
+100 BB reraise stack-offs and did not clear the promotion gate, so the live
+command stays the incumbent checkpoint without this flag. See
+[the decision-guard report](AGGRESSIVE-DECISION-GUARD.md).
+
 Run the paired screen on fresh seeds (100 and 50 BB, four fixed rule styles,
 six seat rotations per deal):
 

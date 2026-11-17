@@ -404,7 +404,7 @@ class HistoryPolicy:
     menu = LEAN_MENU
     key = staticmethod(observation_key)
 
-    def __init__(self, saved, seed=0, min_visits=64, learned=True):
+    def __init__(self, saved, seed=0, min_visits=64, learned=True, preflop_commitment=None):
         if type(min_visits) is not int or min_visits < 1:
             raise ValueError('positive integer minimum visits required')
         self.sums, self.visits = saved['sums'], saved['visits']
@@ -417,11 +417,23 @@ class HistoryPolicy:
         self.decisions = self.covered = self.safeguards = self.thin = 0
         self.pressure_guard = None
         self.pressure_overrides = 0
+        self.commitment_overrides = 0
+        # Opt-in. A partial ledger undercounts chips already invested, so the
+        # caller must attest that the public history is complete.
+        self.preflop_commitment = bool(preflop_commitment if preflop_commitment is not None
+                                       else saved.get('preflop_commitment', False))
         if saved.get('decision_guard') is not None:
             from .equity_policy import PressureGuard
-            if saved['decision_guard'] != PressureGuard.VERSION:
-                raise ValueError('unknown history decision guard')
-            self.pressure_guard = PressureGuard()
+            self.pressure_guard = PressureGuard(saved['decision_guard'])
+
+    def _apply_commitment(self, o, action, history_complete):
+        if not self.preflop_commitment or history_complete is not True or o.street or action == 'fold':
+            return action
+        from .preflop_commitment import guard_preflop
+        limited = guard_preflop(o, action)
+        if limited != action:
+            self.commitment_overrides += 1
+        return limited
 
     def act(self, o, history_complete=None):
         self.decisions += 1
@@ -436,10 +448,10 @@ class HistoryPolicy:
                 # Never fold the nuts; avoid pointless raises when the board plays.
                 self.safeguards += 1
                 raises = [a for a in o.legal if isinstance(a, int)]
-                return raises[-1] if score > best and raises else 'call'
+                return self._apply_commitment(o, raises[-1] if score > best and raises else 'call', history_complete)
         if not o.street and o.hole[0][0] == o.hole[1][0] == 'A':
             self.safeguards += 1
-            return self.fallback.act(o)
+            return self._apply_commitment(o, self.fallback.act(o), history_complete)
         # Live callers explicitly attest replay completeness. A partial history
         # must never reuse a root-like or otherwise populated table coordinate.
         history_present = bool(o.history) or (not o.street and o.position == 2 and o.pot == 3)
@@ -453,14 +465,16 @@ class HistoryPolicy:
                 # Folding a free check is dominated.
                 if action == 'fold' and not o.call:
                     self.safeguards += 1
-                    return 'call'
+                    return self._apply_commitment(o, 'call', history_complete)
                 if self.pressure_guard is not None:
                     guarded = self.pressure_guard.act(o, action)
                     if guarded != action:
                         self.pressure_overrides += 1
-                        return guarded
-                self.covered += 1
-                return action
+                        return self._apply_commitment(o, guarded, history_complete)
+                limited = self._apply_commitment(o, action, history_complete)
+                if limited == action:
+                    self.covered += 1
+                return limited
             self.thin += 1
-        return self.fallback.act(o)
+        return self._apply_commitment(o, self.fallback.act(o), history_complete)
 

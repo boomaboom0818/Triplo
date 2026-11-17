@@ -30,6 +30,11 @@ def test_gate_rejects_unpaired_or_truncated_reports():
     with pytest.raises(ValueError):assess(c,i,f)
     i['seed']=99;i['cases'][SCENARIOS[0][0]]['blocks'].pop()
     with pytest.raises(ValueError):assess(c,i,f)
+    c=report(10);i=report(5,'champion');f=report(6,None,True)
+    c['preflop_commitment']=True
+    with pytest.raises(ValueError, match='preflop_commitment'):assess(c,i,f)
+    i['preflop_commitment']=f['preflop_commitment']=True
+    assert assess(c,i,f)['promote']
 
 
 def test_end_to_end_gate_uses_exact_short_handed_seat_counts(tmp_path):
@@ -40,4 +45,11 @@ def test_end_to_end_gate_uses_exact_short_handed_seat_counts(tmp_path):
     for name,players,*_ in SCENARIOS:
         assert r['cases'][name]['hands']==2*players
         assert r['cases'][name]['decisions']>0
+        case=r['cases'][name]
+        assert len(case['positions'])==players
+        assert [sum(h)/players*100 for h in case['hand_payoffs']]==pytest.approx(case['blocks'])
+        assert len(case['worst_hands'])<=10
+        assert sum(case['overrides_by_street'])==case['pressure_overrides']
+        assert case['commitment_overrides']==0
+    assert r['preflop_commitment'] is False
     with pytest.raises(ValueError):evaluate(path,path,out,98423,2)
