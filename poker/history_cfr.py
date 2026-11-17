@@ -415,13 +415,6 @@ class HistoryPolicy:
         self.min_visits, self.learned = min_visits, learned
         self.fallback = RulePolicy('tight-v1')
         self.decisions = self.covered = self.safeguards = self.thin = 0
-        self.pressure_guard = None
-        self.pressure_overrides = 0
-        if saved.get('decision_guard') is not None:
-            from .equity_policy import PressureGuard
-            if saved['decision_guard'] != PressureGuard.VERSION:
-                raise ValueError('unknown history decision guard')
-            self.pressure_guard = PressureGuard()
 
     def act(self, o, history_complete=None):
         self.decisions += 1
@@ -454,11 +447,6 @@ class HistoryPolicy:
                 if action == 'fold' and not o.call:
                     self.safeguards += 1
                     return 'call'
-                if self.pressure_guard is not None:
-                    guarded = self.pressure_guard.act(o, action)
-                    if guarded != action:
-                        self.pressure_overrides += 1
-                        return guarded
                 self.covered += 1
                 return action
             self.thin += 1

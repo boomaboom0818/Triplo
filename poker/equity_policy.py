@@ -130,26 +130,3 @@ class EquityPolicy:
         if usable >= price + (.025 if o.street == 3 else .05):
             return 'call'
         return 'fold' if 'fold' in o.legal else 'call'
-
-
-class PressureGuard:
-    """Experimental veto of unsupported learned continuations under pressure.
-
-    This is a heuristic restriction, not an EV oracle. It sacrifices some bluffs
-    and can overfold against opponents outside the evaluation population. Enable
-    only explicitly in a candidate checkpoint and measure before promotion.
-    """
-    VERSION = 'equity-pressure-v1'
-
-    def __init__(self):
-        self.equity = EquityPolicy()
-
-    def act(self, o, proposed):
-        if proposed == 'fold' or not o.call or 'fold' not in o.legal:
-            return proposed
-        if not o.street:
-            raises = sum(street == 0 and isinstance(action, int)
-                         for _, _, street, action, _, _ in o.history)
-            if raises < 2:
-                return proposed
-        return 'fold' if self.equity.act(o) == 'fold' else proposed

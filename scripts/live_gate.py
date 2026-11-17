@@ -53,7 +53,6 @@ _EVAL = None
 
 def _evaluate_case(job):
     hero, opponent_saved, seed, deals = _EVAL
-    initial_overrides = hero.pressure_overrides
     case_index, (name, players, stacks, style) = job
     blocks=[];latencies=[];learned=decisions=post_learned=post_decisions=0
     positions=[0,1]+list(range(8-players,6))
@@ -87,7 +86,6 @@ def _evaluate_case(job):
         decisions=decisions,learned=learned,postflop_decisions=post_decisions,postflop_learned=post_learned,
         p99_seconds=latencies[int(.99*(len(latencies)-1))] if latencies else 0,
         maximum_seconds=max(latencies,default=0))
-    result['pressure_overrides'] = hero.pressure_overrides - initial_overrides
     return name, result
 
 
