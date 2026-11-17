@@ -20,6 +20,19 @@ def test_unseen_folds_and_check_is_free():
     assert a['action'] == 'fold' and a['turn_token'] == 't1' and a['hand_id'] == 'h1'
     s['hero']['valid_actions'] = [dict(action='check')]
     assert decision(s, policy)['action'] == 'check'
+    # OpenPoker offers both 'check' and 'fold' on free-check turns; 'fold' must be
+    # excluded from Observation.legal so free-check keys match trained checkpoints.
+    seen = []
+    class Spy:
+        abstraction = 'texture-buckets-v2'
+        class Rows:
+            def get(self, key): return [1]
+        sums = Rows()
+        def act(self, o): seen.append(o); return 'call'
+    s['seats'][1]['bet'] = 10
+    s['hero']['valid_actions'] = [dict(action='fold'), dict(action='check'), dict(action='raise', min=40, max=2000)]
+    assert decision(s, Spy())['action'] == 'check'
+    assert 'fold' not in seen[0].legal and seen[0].call == 0
 
 
 def test_normalized_menu_maps_to_wire_bounds():

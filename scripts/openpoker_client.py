@@ -44,7 +44,7 @@ def decision(snapshot, policy, public_history=(), history_complete=None):
     legal, wire = [], {}
     if passive:
         legal.append('call'); wire['call'] = {'action': passive}
-    if 'fold' in offered:
+    if 'fold' in offered and passive != 'check':
         legal.append('fold'); wire['fold'] = {'action': 'fold'}
     pot = unit(snapshot['pot'])
     if 'raise' in offered:

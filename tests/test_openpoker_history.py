@@ -285,6 +285,52 @@ def test_short_all_in_calls_are_not_replayed_as_raises():
     assert found
 
 
+def test_unapplied_live_all_in_wire_fields_reconstruct_cleanly():
+    # Live OpenPoker all_in events report pre-action pot_after == pot_before,
+    # contribution_delta == 0, and stack_after == stack_before > 0, applying the
+    # shoved stack to pot_before on the next event and snapshot.
+    events = [
+        dict(type='hand_start', table_id='live', hand_id='h-allin', table_seq=1,
+             dealer_seat=2, blinds=dict(small_blind=10, big_blind=20)),
+        dict(type='player_action', table_id='live', hand_id='h-allin', table_seq=2,
+             seat=5, street='preflop', action='fold', amount=None, pot=30,
+             pot_before=30, pot_after=30, to_call_before=20, stack=1500,
+             stack_before=1500, stack_after=1500, contribution_delta=0),
+        dict(type='player_action', table_id='live', hand_id='h-allin', table_seq=3,
+             seat=0, street='preflop', action='all_in', amount=None, pot=30,
+             pot_before=30, pot_after=30, to_call_before=20, stack=510,
+             stack_before=510, stack_after=510, contribution_delta=0),
+        dict(type='player_action', table_id='live', hand_id='h-allin', table_seq=4,
+             seat=1, street='preflop', action='fold', amount=None, pot=540,
+             pot_before=540, pot_after=540, to_call_before=510, stack=2000,
+             stack_before=2000, stack_after=2000, contribution_delta=0),
+        dict(type='player_action', table_id='live', hand_id='h-allin', table_seq=5,
+             seat=2, street='preflop', action='fold', amount=None, pot=540,
+             pot_before=540, pot_after=540, to_call_before=510, stack=2000,
+             stack_before=2000, stack_after=2000, contribution_delta=0),
+    ]
+    snap = dict(table_id='live', hand_id='h-allin', table_seq=6, dealer_seat=2,
+                big_blind=20, street='preflop', pot=540, board=[], actor_seat=3,
+                seats=[
+                    dict(seat=0, in_hand=True, folded=False, stack=0, bet=510),
+                    dict(seat=1, in_hand=True, folded=True, stack=2000, bet=0),
+                    dict(seat=2, in_hand=True, folded=True, stack=2000, bet=0),
+                    dict(seat=3, in_hand=True, folded=False, stack=1990, bet=10),
+                    dict(seat=4, in_hand=True, folded=False, stack=1980, bet=20),
+                    dict(seat=5, in_hand=True, folded=True, stack=1500, bet=0),
+                ],
+                hero=dict(seat=3, hole_cards=['Ah', 'Kd'], turn_token='tok',
+                          valid_actions=[dict(action='fold'), dict(action='call', amount=500)]))
+    tracker = PublicHistory()
+    history, complete = tracker.resync(dict(snapshot=snap, to_table_seq=6, replayed_events=events))
+    assert complete, tracker.last_reason
+    assert len(history) == 4 and history[1][3] == 51
+    # Tampering with the final snapshot pot or stack still fails verification.
+    bad = deepcopy(snap)
+    bad['seats'][0]['stack'] = 510
+    assert not PublicHistory().resync(dict(snapshot=bad, to_table_seq=6, replayed_events=events))[1]
+
+
 def test_rejected_token_is_not_retried_and_ack_is_logged(tmp_path, monkeypatch):
     import asyncio
     import json
