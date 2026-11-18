@@ -11,15 +11,17 @@ import statistics
 import time
 from pathlib import Path
 from poker.fast_game import FastGame
-from poker.equity_policy import EquityPolicy
+from poker.equity_policy import EquityPolicy, GuardedEquityPolicy
 from poker.rule_opponents import RulePolicy, STYLES
 from scripts.rule_gate import summarize
 
 
 def case(args):
-    style, stack_bb, deals, seed, samples = args
+    style, stack_bb, deals, seed, samples, guarded = args
     opponent = RulePolicy(style)
-    policies = {'tight': RulePolicy('tight-v1'), 'equity': EquityPolicy(samples)}
+    control, candidate = ('equity-v1', 'equity-guarded-v1') if guarded else ('tight', 'equity')
+    policies = {control: EquityPolicy(samples) if guarded else RulePolicy('tight-v1'),
+                candidate: GuardedEquityPolicy(samples) if guarded else EquityPolicy(samples)}
     results = {}; timings = []
     for name, hero in policies.items():
         values = []
@@ -31,13 +33,13 @@ def case(args):
                     o = game.observe()
                     start = time.perf_counter()
                     action = (hero if o.player==seat else opponent).act(o)
-                    if o.player==seat and name=='equity' and o.street:
+                    if o.player==seat and name==candidate and o.street:
                         timings.append(time.perf_counter()-start)
                     game.act(action)
                 block.append(game.payoff()[seat])
             values.append(statistics.mean(block)*100)
         results[name] = dict(summarize(values,0), samples=values)
-    difference = [a-b for a,b in zip(results['equity']['samples'],results['tight']['samples'])]
+    difference = [a-b for a,b in zip(results[candidate]['samples'],results[control]['samples'])]
     timings.sort()
     return f'{style}/{stack_bb}bb', dict(policies=results, paired_difference=summarize(difference,0),
         latency_seconds=dict(p95=timings[int(.95*(len(timings)-1))] if timings else 0, maximum=max(timings,default=0)))
@@ -45,16 +47,18 @@ def case(args):
 
 def main():
     p=argparse.ArgumentParser()
+    p.add_argument('--guarded', action='store_true', help='compare experimental guarded fallback against frozen equity-v1')
     p.add_argument('--deals',type=int,default=100)
     p.add_argument('--seed',type=int,required=True)
     p.add_argument('--samples',type=int,default=256)
     p.add_argument('--out',type=Path,required=True)
     args=p.parse_args()
     if args.deals<2 or args.out.exists(): p.error('need at least two deals and a new output path')
-    jobs=[(style,stack,args.deals,args.seed,args.samples) for style in STYLES for stack in (50,100)]
+    jobs=[(style,stack,args.deals,args.seed,args.samples,args.guarded) for style in STYLES for stack in (50,100)]
     source_hashes={p:hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in
                    ('poker/equity_policy.py','poker/rule_opponents.py','poker/fast_game.py','scripts/equity_fallback_check.py')}
-    report=dict(source_sha256=source_hashes, seed=args.seed,deals=args.deals,samples=args.samples,
+    report=dict(control='equity-v1' if args.guarded else 'tight-v1',
+                candidate='equity-guarded-v1' if args.guarded else 'equity-v1', source_sha256=source_hashes, seed=args.seed,deals=args.deals,samples=args.samples,
                 note='Screen only. Paired pointwise 95% normal intervals over deal blocks; shared deals across styles.',cases={})
     with ProcessPoolExecutor(max_workers=4) as pool:
         for key,result in pool.map(case,jobs):

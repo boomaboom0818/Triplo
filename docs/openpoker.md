@@ -88,11 +88,34 @@ Reports retain source hashes, per-deal outcomes, paired differences, pointwise
 screens, not proof of OpenPoker profitability. Preserve reports and avoid tuning
 on a confirmation seed and continuing to describe it as held out.
 
+`--fallback equity-guarded-v1` selects an experimental fallback that counts total
+preflop contributions when applying the tight chart's commitment limits, and
+requires hole cards to improve the board's category for strong-hand value raises.
+It also suppresses raises with weak made hands facing a bet or a prior postflop
+reraise. Preflop caps require a complete ledger; the live adapter discards
+unverified history before invoking this fallback. Learned checkpoint decisions
+are unaffected. The default remains `tight-v1` and `equity-v1` remains the frozen
+control. This candidate has not established improved live profitability.
+
+Reproduce a paired development screen against the frozen equity fallback with:
+
+```bash
+python -m scripts.equity_fallback_check --guarded --deals 300 --seed 71661000 --out runs/bot/guarded-equity-screen.json
+```
+
+The initial 30-deal smoke screen in `runs/bot/guarded-equity-resume-screen-v2.json`
+was inconclusive. It tests six seats against four fixed rule opponents at two
+stack depths, not the nine-condition learned-policy promotion gate. No promotion
+or live deployment follows from that smoke screen.
+
 Decision records include `decision_source`: `learned_policy`, `poker_safeguard`,
-`preflop_rules`, `equity_fallback`, `rule_fallback`, or `safety_fallback`.
-`covered` retains its existing meaning (a learned row supplied the action).
-A safeguard can supersede learned play, so `covered: false` alone does not imply
-that Monte Carlo equity was used. These diagnostics are never sent on the wire.
+`pressure_guard`, `preflop_rules`, `equity_fallback`, `rule_fallback`, or
+`safety_fallback`. `covered` retains its existing meaning (a learned row supplied
+the action without override). A safeguard or opt-in `decision_guard`
+(`equity-pressure-v1` or `equity-pressure-v2`, exported via
+`scripts/export_pressure_guard.py`) can supersede learned play, so `covered: false`
+alone does not imply that the uncovered fallback was used. These diagnostics are
+never sent on the wire.
 
 The equity range model now classifies top pair by the rank actually paired with
 the board, rather than the highest hole-card kicker. Overpairs remain in the

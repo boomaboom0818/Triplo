@@ -6,6 +6,7 @@ No simulator state or opponent private cards are consumed. Preflop remains the
 existing tight baseline, isolating the postflop change for paired evaluation.
 """
 from bisect import bisect_left
+from collections import Counter
 from functools import lru_cache
 from hashlib import blake2b
 from itertools import combinations
@@ -131,3 +132,126 @@ class EquityPolicy:
         if usable >= price + (.025 if o.street == 3 else .05):
             return 'call'
         return 'fold' if 'fold' in o.legal else 'call'
+
+
+def preflop_commitment(o):
+    """Hero's total street contribution, in normalized chips, from the ledger.
+
+    Integer actions are raise-to amounts. Calls add the recorded call amount;
+    blind positions 0 and 1 begin with one and two chips respectively.
+    Requires a complete public action history.
+    """
+    committed = 1 if o.position == 0 else 2 if o.position == 1 else 0
+    for _, position, street, action, _, call in o.history:
+        if street == 0 and position == o.position:
+            if isinstance(action, int):
+                committed = action
+            elif action == 'call':
+                committed += call
+    return committed
+
+
+def private_strength(hole, board):
+    """Made strength contributed by hole cards, excluding board-only categories."""
+    category = evaluate(hole + board) >> 20
+    ranks = [c >> 2 for c in board]
+    # The evaluator requires five cards; a four-card two-pair board has no
+    # kicker and cannot be scored directly (its missing kicker encodes -1).
+    if len(board) == 5:
+        board_category = evaluate(board) >> 20
+    else:
+        counts = sorted(Counter(ranks).values(), reverse=True)
+        board_category = (7 if counts[0] == 4 else 3 if counts[0] == 3
+                          else 2 if counts.count(2) == 2 else 1 if counts[0] == 2 else 0)
+    own = [c >> 2 for c in hole]
+    pair = own[0] == own[1] or any(r in ranks for r in own)
+    strong = category >= 2 and category > board_category
+    top_pair = category == 1 and (max(ranks) in own or own[0] == own[1] > max(ranks))
+    return strong, top_pair, pair
+
+
+class GuardedEquityPolicy(EquityPolicy):
+    """Opt-in development fallback; requires a complete ledger for preflop caps.
+
+    Preserve EquityPolicy as a frozen control. This heuristic is not promoted by
+    default: equity priors can overfold to bluffs and do not model side-pot EV.
+    """
+    def act(self, o):
+        if not o.street:
+            proposed = super().act(o)
+            score = chen(o.hole)
+            if proposed == 'fold' or score < 7 or score >= 12 or not o.history:
+                return proposed
+            limit = 20 if score >= 9 else 6
+            committed = preflop_commitment(o)
+            cost = proposed if isinstance(proposed, int) else committed + o.call
+            if cost <= limit:
+                return proposed
+            return 'call' if not o.call or committed + o.call <= limit else ('fold' if 'fold' in o.legal else 'call')
+
+        self.last = None
+        equity, error = estimate_equity(o, self.samples)
+        opponents = sum(o.active) - 1
+        price = o.call / max(1, o.pot + o.call)
+        usable = equity * (1.0 if o.street == 3 else .90) - error
+        self.last = dict(equity=equity, standard_error=error, pot_odds=price, samples=self.samples)
+        raises = [a for a in o.legal if isinstance(a, int)]
+        hole = tuple(CARD_ID[c] for c in o.hole)
+        board = tuple(CARD_ID[c] for c in o.board)
+        strong, top_pair, _ = private_strength(hole, board)
+        board_plays = o.street == 3 and evaluate(hole + board) == evaluate(board)
+        reraised = any(h[2] > 0 and isinstance(h[3], int) and h[5] > 0 for h in o.history)
+        baseline = 'call'
+        if board_plays or (not strong and (o.call or reraised)):
+            raises = []
+        elif raises and strong and o.call < o.pot:
+            baseline = raises[min(2, len(raises) - 1)]
+        elif raises and top_pair and not o.call:
+            baseline = raises[min(1, len(raises) - 1)]
+        if isinstance(baseline, int) and usable >= (.50 if opponents == 1 else .40):
+            return baseline
+        if raises and usable >= (.68 if opponents == 1 else .60):
+            bounded = [a for a in raises if a <= max(2, o.call + 2 * o.pot)]
+            if bounded:
+                return bounded[-1] if usable > .85 else bounded[0]
+        if not o.call or usable >= price + (.025 if o.street == 3 else .05):
+            return 'call'
+        return 'fold' if 'fold' in o.legal else 'call'
+
+
+class PressureGuard:
+    """Experimental veto of unsupported learned continuations under pressure.
+
+    This is a heuristic restriction, not an EV oracle. It sacrifices some bluffs
+    and can overfold against opponents outside the evaluation population. Enable
+    only explicitly in a candidate checkpoint and measure before promotion.
+    """
+    VERSION = 'equity-pressure-v1'
+    V2_VERSION = 'equity-pressure-v2'
+    VERSIONS = (VERSION, V2_VERSION)
+
+    def __init__(self, version=VERSION):
+        if version not in self.VERSIONS:
+            raise ValueError('unknown history decision guard')
+        self.version = version
+        self.equity = EquityPolicy()
+
+    def act(self, o, proposed):
+        if proposed == 'fold' or not o.call or 'fold' not in o.legal:
+            return proposed
+        if not o.street:
+            raises = sum(street == 0 and isinstance(action, int)
+                         for _, _, street, action, _, _ in o.history)
+            if raises < 2:
+                return proposed
+        if self.equity.act(o) == 'fold':
+            return 'fold'
+        if self.version == self.V2_VERSION and o.street and isinstance(proposed, int):
+            hole = tuple(CARD_ID[c] for c in o.hole)
+            board = tuple(CARD_ID[c] for c in o.board)
+            strong, _, _ = private_strength(hole, board)
+            board_plays = o.street == 3 and evaluate(hole + board) == evaluate(board)
+            if board_plays or not strong:
+                return 'call'
+        return proposed
+

@@ -199,3 +199,20 @@ def test_trace_redacts_nested_action_authority():
     assert 'secret' not in repr(cleaned)
     assert cleaned['snapshot']['hero']['hole_cards']==['Ah','Ad']
     assert value['snapshot']['hero']['turn_token']=='secret'
+
+
+def test_guarded_fallback_discards_unverified_ledger():
+    from poker.equity_policy import GuardedEquityPolicy
+    from poker.history_cfr import HistoryPolicy
+    seen = []
+    class Spy(GuardedEquityPolicy):
+        def act(self, o):
+            seen.append(o.history)
+            return 'call'
+    policy = HistoryPolicy(dict(sums={}, visits={}, stack_bb=100))
+    policy.fallback = Spy(32)
+    history = ((2,2,0,18,3,2),)
+    decision(snapshot(), policy, history, history_complete=False)
+    assert seen[-1] == ()
+    decision(snapshot(), policy, history, history_complete=True)
+    assert seen[-1] == history

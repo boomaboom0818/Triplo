@@ -48,3 +48,38 @@ def test_preflop_preserves_baseline_and_validates_budget():
     o=replace(observation(),street=0,board=())
     assert p.act(o)==p.preflop.act(o)
     with pytest.raises(ValueError): EquityPolicy(0)
+
+
+def test_private_strength_excludes_shared_board_categories():
+    from poker.equity_policy import private_strength
+    from poker.fast_eval import CARD_ID
+    def strength(hole, board):
+        return private_strength(tuple(map(CARD_ID.__getitem__, hole)), tuple(map(CARD_ID.__getitem__, board)))
+    assert not strength(('As','Kd'), ('7c','7d','7h'))[0]
+    assert not strength(('As','2d'), ('Kc','Kd','Qc','Qd'))[0]
+    assert not strength(('As','Qd'), ('Kc','Qh','2c'))[1]
+    assert strength(('Qs','Qd'), ('Kc','Qh','2c'))[0]
+    assert strength(('As','Ad'), ('Kc','Qh','2c'))[1]
+    assert strength(('7s','Ad'), ('7c','7d','2h'))[0]
+
+
+def test_guarded_preflop_counts_repeated_small_calls():
+    from poker.equity_policy import GuardedEquityPolicy, preflop_commitment
+    # KQs scores ten: each call fits the old 20-chip price limit, but the
+    # cumulative cost exceeds it after repeated small raises.
+    o=replace(observation(('Ks','Qs')), street=0, board=(), call=4,
+              history=((0,0,0,18,3,1),(1,1,0,22,20,16)), legal=('call','fold',26))
+    assert preflop_commitment(o)==18
+    assert EquityPolicy(32).act(o)=='call'
+    assert GuardedEquityPolicy(32).act(o)=='fold'
+    assert GuardedEquityPolicy(32).act(replace(o,call=0))=='call'
+    assert GuardedEquityPolicy(32).act(replace(o,hole=('As','Ah')))!='fold'
+
+
+def test_guarded_does_not_raise_board_trips_under_pressure(monkeypatch):
+    import poker.equity_policy as module
+    monkeypatch.setattr(module, 'estimate_equity', lambda *a: (.95, 0.))
+    o=observation(('As','Kd'), ('7c','7d','7h'), call=10)
+    assert module.GuardedEquityPolicy(32).act(o)=='call'
+    assert isinstance(module.GuardedEquityPolicy(32).act(
+        replace(o,hole=('7s','Ad'))), int)

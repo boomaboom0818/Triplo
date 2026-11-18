@@ -6,7 +6,7 @@ import json
 import logging
 import os
 import time
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from uuid import uuid4
 from urllib.request import Request, urlopen
@@ -93,8 +93,12 @@ def decision(snapshot, policy, public_history=(), history_complete=None):
         # Lean policies answer unseen states themselves with a tight rule player.
         before = getattr(policy, 'covered', 0)
         safeguards_before = getattr(policy, 'safeguards', 0)
+        overrides_before = getattr(policy, 'pressure_overrides', 0)
         if hasattr(policy.fallback, 'last'):
             policy.fallback.last = None
+        from poker.equity_policy import GuardedEquityPolicy
+        if isinstance(policy.fallback, GuardedEquityPolicy) and history_complete is not True:
+            observation = replace(observation, history=())
         if isinstance(policy, history_cfr.HistoryPolicy):
             action = policy.act(observation, history_complete=history_complete is True)
         else:
@@ -102,6 +106,8 @@ def decision(snapshot, policy, public_history=(), history_complete=None):
         covered = getattr(policy, 'covered', 0) > before
         if getattr(policy, 'safeguards', 0) > safeguards_before:
             source = 'poker_safeguard'
+        elif getattr(policy, 'pressure_overrides', 0) > overrides_before:
+            source = 'pressure_guard'
         elif not covered:
             from poker.equity_policy import EquityPolicy
             source = ('preflop_rules' if not street else 'equity_fallback') if isinstance(policy.fallback, EquityPolicy) else 'rule_fallback'
@@ -283,7 +289,7 @@ def main():
                         help='lean only: use tight fallback below this normalized average mass (default: disabled)')
     parser.add_argument('--min-visits', type=int, default=64,
                         help='history model: minimum sampled average visits before using a learned row')
-    parser.add_argument('--fallback', choices=('tight-v1', 'equity-v1'), default='tight-v1',
+    parser.add_argument('--fallback', choices=('tight-v1', 'equity-v1', 'equity-guarded-v1'), default='tight-v1',
                         help='rule fallback for history/lean policies; equity-v1 uses bounded range sampling')
     parser.add_argument('--trace', type=Path, help='optional redacted public events and replay snapshots for diagnostics')
     parser.add_argument('--log', type=Path, help='append decisions and hand results as JSON lines')
@@ -310,6 +316,8 @@ def main():
             parser.error('--min-support requires a lean checkpoint')
         policy = history_cfr.HistoryPolicy(saved, args.seed, args.min_visits)
         LOG.info('History model: learned rows require verified replay and min_visits=%s', args.min_visits)
+        if policy.pressure_guard is not None:
+            LOG.info('Decision guard: %s', policy.pressure_guard.version)
     elif saved['abstraction'] == lean_cfr.VERSION:
         policy = lean_cfr.LeanPolicy.from_checkpoint(saved, args.seed, args.min_support)
         LOG.info('Sparse-row fallback min_support=%s', args.min_support)
@@ -317,12 +325,12 @@ def main():
         if args.min_support != 0:
             parser.error('--min-support requires a lean checkpoint')
         policy = CFRPolicy(saved['sums'], args.seed, saved['abstraction'])
-    if args.fallback == 'equity-v1':
+    if args.fallback in ('equity-v1', 'equity-guarded-v1'):
         if not hasattr(policy, 'fallback'):
-            parser.error('--fallback equity-v1 requires a history or lean checkpoint')
-        from poker.equity_policy import EquityPolicy
-        policy.fallback = EquityPolicy()
-        LOG.info('Fallback: equity-v1 (256 deterministic range samples)')
+            parser.error('equity fallbacks require a history or lean checkpoint')
+        from poker.equity_policy import EquityPolicy, GuardedEquityPolicy
+        policy.fallback = GuardedEquityPolicy() if args.fallback == 'equity-guarded-v1' else EquityPolicy()
+        LOG.info('Fallback: %s (256 deterministic range samples)', args.fallback)
     try:
         asyncio.run(run(args, policy, key))
     except KeyboardInterrupt:
