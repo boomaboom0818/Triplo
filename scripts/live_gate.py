@@ -42,9 +42,16 @@ def digest(path):
     return h.hexdigest()
 
 
-def make_policy(saved, learned=True):
+HERO_FALLBACKS=('equity-v1','equity-guarded-v1','equity-guarded-v1+stack-press')
+
+
+def make_policy(saved, learned=True, fallback='equity-v1'):
     p=HistoryPolicy(saved, min_visits=64, learned=learned)
-    p.fallback=EquityPolicy()
+    if fallback=='equity-v1':p.fallback=EquityPolicy()
+    elif fallback in HERO_FALLBACKS:
+        from poker.equity_policy import GuardedEquityPolicy
+        p.fallback=GuardedEquityPolicy(stack_press=fallback.endswith('stack-press'))
+    else:raise ValueError('unknown fallback')
     return p
 
 
@@ -91,15 +98,15 @@ def _evaluate_case(job):
     return name, result
 
 
-def evaluate(checkpoint, incumbent, out, seed, deals, fallback=False):
+def evaluate(checkpoint, incumbent, out, seed, deals, fallback=False, hero_fallback='equity-v1'):
     if deals<2 or Path(out).exists():raise ValueError('need >=2 deals and a new output')
     incumbent=Path(incumbent); checkpoint=Path(checkpoint)
     saved=load(checkpoint) if not fallback else dict(sums={},visits={},stack_bb=100,abstraction=COMPACT_VERSION)
-    hero=make_policy(saved,not fallback)
+    hero=make_policy(saved,not fallback,hero_fallback)
     opponent_saved=saved if checkpoint.resolve()==incumbent.resolve() and not fallback else load(incumbent)
     report=dict(schema=1,checkpoint=str(checkpoint),checkpoint_sha256=None if fallback else digest(checkpoint),
                 incumbent_sha256=digest(incumbent),fallback_only=fallback,seed=seed,deals=deals,min_visits=64,
-                fallback='equity-v1',scenarios=SCENARIOS,cases={})
+                fallback='equity-v1',hero_fallback=hero_fallback,scenarios=SCENARIOS,cases={})
     report['source_sha256']={p:digest(p) for p in ('scripts/live_gate.py','poker/history_cfr.py',
         'poker/equity_policy.py','poker/live_curriculum.py','poker/fast_game.py','poker/rule_opponents.py')}
     global _EVAL
@@ -164,9 +171,10 @@ def main():
     p=argparse.ArgumentParser();sub=p.add_subparsers(dest='command',required=True)
     e=sub.add_parser('evaluate');e.add_argument('--checkpoint',type=Path,required=True);e.add_argument('--incumbent',type=Path,required=True)
     e.add_argument('--out',type=Path,required=True);e.add_argument('--seed',type=int,required=True);e.add_argument('--deals',type=int,required=True);e.add_argument('--fallback-only',action='store_true')
+    e.add_argument('--hero-fallback',choices=HERO_FALLBACKS,default='equity-v1',help='fallback for the evaluated hero only; opponents keep equity-v1')
     a=sub.add_parser('assess');a.add_argument('--candidate',type=Path,required=True);a.add_argument('--incumbent',type=Path,required=True);a.add_argument('--fallback',type=Path,required=True);a.add_argument('--out',type=Path,required=True);a.add_argument('--screen',action='store_true')
     args=p.parse_args()
-    if args.command=='evaluate':evaluate(args.checkpoint,args.incumbent,args.out,args.seed,args.deals,args.fallback_only)
+    if args.command=='evaluate':evaluate(args.checkpoint,args.incumbent,args.out,args.seed,args.deals,args.fallback_only,args.hero_fallback)
     else:
         reports=[json.loads(p.read_text()) for p in (args.candidate,args.incumbent,args.fallback)]
         result=assess(*reports,confirmation=not args.screen)

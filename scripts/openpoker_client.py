@@ -53,7 +53,12 @@ def decision(snapshot, policy, public_history=(), history_complete=None):
         # Retain exact advertised wire bounds even when normalization rounds.
         lean = getattr(policy, 'menu', None) == LEAN_MENU
         sizes = {} if lean else {unit(lo): lo, unit(hi): hi}
-        for n in (bet + pot // 2, bet + pot):
+        targets = [bet + pot // 2, bet + pot]
+        # Stack Press: deep stacks also get 2x-pot and half-stack sizes.
+        hero_stack = unit(seats[position]['stack'])
+        if getattr(getattr(policy, 'fallback', None), 'stack_press', False) and hero_stack > 200:
+            targets.extend((bet + 2 * pot, bet + max(2 * pot, hero_stack // 2)))
+        for n in targets:
             amount = min(hi, max(lo, round(n * scale)))
             sizes.setdefault(unit(amount), amount)
         # Lean checkpoints are trained without a bare minimum raise or deep all-in.
@@ -293,6 +298,9 @@ def main():
                         help='rule fallback for history/lean policies; equity-v1 uses bounded range sampling')
     parser.add_argument('--trace', type=Path, help='optional redacted public events and replay snapshots for diagnostics')
     parser.add_argument('--log', type=Path, help='append decisions and hand results as JSON lines')
+    parser.add_argument('--stack-press', action=argparse.BooleanOptionalAction, default=False,
+                        help='Stack Press: with equity-guarded-v1, near-nut hands may raise up to the '
+                             'whole stack (good vs weaker fields, risky vs strong tight ones)')
     parser.add_argument('--max-minutes', type=float, help='stop after the first completed hand past this many minutes')
     parser.add_argument('--stop-on-season-end', action='store_true',
                         help='exit when the current season ends instead of joining the next one')
@@ -329,8 +337,12 @@ def main():
         if not hasattr(policy, 'fallback'):
             parser.error('equity fallbacks require a history or lean checkpoint')
         from poker.equity_policy import EquityPolicy, GuardedEquityPolicy
-        policy.fallback = GuardedEquityPolicy() if args.fallback == 'equity-guarded-v1' else EquityPolicy()
-        LOG.info('Fallback: %s (256 deterministic range samples)', args.fallback)
+        if args.stack_press and args.fallback != 'equity-guarded-v1':
+            parser.error('--stack-press requires --fallback equity-guarded-v1')
+        policy.fallback = (GuardedEquityPolicy(stack_press=args.stack_press)
+                           if args.fallback == 'equity-guarded-v1' else EquityPolicy())
+        LOG.info('Fallback: %s (256 deterministic range samples), Stack Press %s',
+                 args.fallback, 'ON' if args.stack_press else 'OFF')
     try:
         asyncio.run(run(args, policy, key))
     except KeyboardInterrupt:

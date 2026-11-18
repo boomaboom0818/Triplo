@@ -165,8 +165,11 @@ def private_strength(hole, board):
                           else 2 if counts.count(2) == 2 else 1 if counts[0] == 2 else 0)
     own = [c >> 2 for c in hole]
     pair = own[0] == own[1] or any(r in ranks for r in own)
-    strong = category >= 2 and category > board_category
-    top_pair = category == 1 and (max(ranks) in own or own[0] == own[1] > max(ranks))
+    # A paired board (board_category == 1) plus one hole-card pair has category == 2
+    # (two pair), but hero only contributed one pair; require either an unpaired
+    # board for two-pair or trips+ improving the board category.
+    strong = (category >= 3 and category > board_category) or (category == 2 and board_category == 0)
+    top_pair = (category == 1 or (category == 2 and board_category == 1)) and (max(ranks) in own or own[0] == own[1] > max(ranks))
     return strong, top_pair, pair
 
 
@@ -175,14 +178,26 @@ class GuardedEquityPolicy(EquityPolicy):
 
     Preserve EquityPolicy as a frozen control. This heuristic is not promoted by
     default: equity priors can overfold to bluffs and do not model side-pot EV.
+
+    ``stack_press`` ("Stack Press") lets near-nut hands (strong and usable
+    equity >= STACK_PRESS_EQUITY) raise up to the hero's whole stack instead
+    of call + 2 * pot. It earns more against loose or weaker fields and risks
+    more against strong, tight ones, so it is off by default and toggled per
+    deployment (``--stack-press`` on the OpenPoker client).
     """
+    STACK_PRESS_EQUITY = .80
+
+    def __init__(self, samples=256, stack_press=False):
+        super().__init__(samples)
+        self.stack_press = stack_press
+
     def act(self, o):
         if not o.street:
             proposed = super().act(o)
             score = chen(o.hole)
-            if proposed == 'fold' or score < 7 or score >= 12 or not o.history:
+            if proposed == 'fold' or score < 7 or score >= 15 or not o.history:
                 return proposed
-            limit = 20 if score >= 9 else 6
+            limit = 200 if score >= 12 else 20 if score >= 9 else 6
             committed = preflop_commitment(o)
             cost = proposed if isinstance(proposed, int) else committed + o.call
             if cost <= limit:
@@ -202,19 +217,27 @@ class GuardedEquityPolicy(EquityPolicy):
         board_plays = o.street == 3 and evaluate(hole + board) == evaluate(board)
         reraised = any(h[2] > 0 and isinstance(h[3], int) and h[5] > 0 for h in o.history)
         baseline = 'call'
-        if board_plays or (not strong and (o.call or reraised)):
+        press = self.stack_press and strong and usable >= self.STACK_PRESS_EQUITY
+        if board_plays or (not strong and (o.call or reraised)) or (o.call and reraised and usable < .80):
             raises = []
         elif raises and strong and o.call < o.pot:
-            baseline = raises[min(2, len(raises) - 1)]
+            baseline = raises[-1] if press else raises[min(2, len(raises) - 1)]
         elif raises and top_pair and not o.call:
             baseline = raises[min(1, len(raises) - 1)]
         if isinstance(baseline, int) and usable >= (.50 if opponents == 1 else .40):
             return baseline
         if raises and usable >= (.68 if opponents == 1 else .60):
-            bounded = [a for a in raises if a <= max(2, o.call + 2 * o.pot)]
+            cap = max(2, o.call + 2 * o.pot)
+            if press:
+                cap = max(cap, o.stacks[o.position])
+            bounded = [a for a in raises if a <= cap]
             if bounded:
-                return bounded[-1] if usable > .85 else bounded[0]
-        if not o.call or usable >= price + (.025 if o.street == 3 else .05):
+                return bounded[-1] if press or usable > .85 else bounded[0]
+        if not o.call:
+            return 'call'
+        if o.street == 3 and o.call > 200 and not strong:
+            return 'fold' if 'fold' in o.legal else 'call'
+        if usable >= price + (.025 if o.street == 3 else .05):
             return 'call'
         return 'fold' if 'fold' in o.legal else 'call'
 
@@ -240,18 +263,31 @@ class PressureGuard:
         if proposed == 'fold' or not o.call or 'fold' not in o.legal:
             return proposed
         if not o.street:
+            if self.version == self.V2_VERSION and o.history:
+                score = chen(o.hole)
+                if 12 <= score < 15:
+                    committed = preflop_commitment(o)
+                    cost = proposed if isinstance(proposed, int) else committed + o.call
+                    if cost > 200:
+                        return 'call' if committed + o.call <= 200 else 'fold'
             raises = sum(street == 0 and isinstance(action, int)
                          for _, _, street, action, _, _ in o.history)
             if raises < 2:
                 return proposed
         if self.equity.act(o) == 'fold':
             return 'fold'
-        if self.version == self.V2_VERSION and o.street and isinstance(proposed, int):
+        if self.version == self.V2_VERSION and o.street:
             hole = tuple(CARD_ID[c] for c in o.hole)
             board = tuple(CARD_ID[c] for c in o.board)
             strong, _, _ = private_strength(hole, board)
             board_plays = o.street == 3 and evaluate(hole + board) == evaluate(board)
-            if board_plays or not strong:
-                return 'call'
+            if o.street == 3 and o.call > 200 and not strong:
+                return 'fold'
+            if isinstance(proposed, int):
+                reraised = any(h[2] > 0 and isinstance(h[3], int) and h[5] > 0 for h in o.history)
+                usable = (self.equity.last['equity'] * (1.0 if o.street == 3 else .90)
+                          - self.equity.last['standard_error']) if self.equity.last else 0.0
+                if board_plays or not strong or (reraised and usable < .80):
+                    return 'call'
         return proposed
 

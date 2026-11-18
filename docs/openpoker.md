@@ -97,6 +97,19 @@ unverified history before invoking this fallback. Learned checkpoint decisions
 are unaffected. The default remains `tight-v1` and `equity-v1` remains the frozen
 control. This candidate has not established improved live profitability.
 
+The guarded fallback treats a paired board plus one hole-card pair as one pair,
+does not re-raise a postflop reraise without usable equity >= 0.80, folds river
+calls above 100 BB without two pair or better, and caps JJ/QQ preflop commitment
+at 100 BB.
+
+**Stack Press** (`--stack-press`, off by default; requires `--fallback
+equity-guarded-v1`) lets strong hands with usable equity >= 0.80 raise up to the
+whole stack, and adds 2x-pot and half-stack sizes to the menu when the hero has
+more than 100 BB. Turn it on against loose or weaker fields and off against
+tight, strong ones. The client log prints `Stack Press ON/OFF` at startup.
+Compare variants with `python -m scripts.selfplay_ab` (duplicate self-play) or
+`python -m scripts.live_gate evaluate --hero-fallback equity-guarded-v1+stack-press`.
+
 Reproduce a paired development screen against the frozen equity fallback with:
 
 ```bash

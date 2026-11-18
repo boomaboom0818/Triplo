@@ -58,12 +58,16 @@ def test_private_strength_excludes_shared_board_categories():
     assert not strength(('As','Kd'), ('7c','7d','7h'))[0]
     assert not strength(('As','2d'), ('Kc','Kd','Qc','Qd'))[0]
     assert not strength(('As','Qd'), ('Kc','Qh','2c'))[1]
+    # Paired board + one hole-card pair is one pair (strong=False, top_pair=True), not strong two-pair.
+    assert strength(('Jh','Kc'), ('5c','Js','5s','8d')) == (False, True, True)
+    assert strength(('9h','9d'), ('5c','Js','5s','8d')) == (False, False, True)
     assert strength(('Qs','Qd'), ('Kc','Qh','2c'))[0]
+    assert strength(('Kh','Qh'), ('Kc','Qh','2c'))[0]
     assert strength(('As','Ad'), ('Kc','Qh','2c'))[1]
     assert strength(('7s','Ad'), ('7c','7d','2h'))[0]
 
 
-def test_guarded_preflop_counts_repeated_small_calls():
+def test_guarded_preflop_counts_repeated_small_calls_and_caps_jj_qq_at_100bb():
     from poker.equity_policy import GuardedEquityPolicy, preflop_commitment
     # KQs scores ten: each call fits the old 20-chip price limit, but the
     # cumulative cost exceeds it after repeated small raises.
@@ -74,12 +78,36 @@ def test_guarded_preflop_counts_repeated_small_calls():
     assert GuardedEquityPolicy(32).act(o)=='fold'
     assert GuardedEquityPolicy(32).act(replace(o,call=0))=='call'
     assert GuardedEquityPolicy(32).act(replace(o,hole=('As','Ah')))!='fold'
+    # QQ (chen=13) caps at 200 units (100 BB); KK/AA (chen >= 14) remain uncapped.
+    shove=replace(observation(('Qc','Qh')), street=0, board=(), call=964, pot=12618,
+                  history=((0,0,0,12,10,7),(1,1,0,12449,22,12)), legal=('call','fold'))
+    assert GuardedEquityPolicy(32).act(shove)=='fold'
+    assert GuardedEquityPolicy(32).act(replace(shove, call=150))=='call'
+    assert GuardedEquityPolicy(32).act(replace(shove, hole=('Ks','Kh')))=='call'
 
 
-def test_guarded_does_not_raise_board_trips_under_pressure(monkeypatch):
+def test_guarded_does_not_raise_board_trips_or_reraise_without_near_nuts_or_call_huge_river_overbet(monkeypatch):
     import poker.equity_policy as module
     monkeypatch.setattr(module, 'estimate_equity', lambda *a: (.95, 0.))
     o=observation(('As','Kd'), ('7c','7d','7h'), call=10)
     assert module.GuardedEquityPolicy(32).act(o)=='call'
     assert isinstance(module.GuardedEquityPolicy(32).act(
         replace(o,hole=('7s','Ad'))), int)
+    # Facing a postflop reraise (h[5] > 0) with usable < 0.80, do not 3-bet/4-bet.
+    monkeypatch.setattr(module, 'estimate_equity', lambda *a: (.72, 0.))
+    reraised=replace(o, hole=('7s','8d'), board=('Qc','9c','Ac','4c'), call=76, pot=236,
+                     history=((0,0,2,21,21,0),(1,1,2,97,42,21)), legal=('call','fold',215,475))
+    assert module.GuardedEquityPolicy(32).act(reraised)=='call'
+    # Stack Press: with usable >= 0.80 and a strong hand, raising up to hero_stack
+    # is permitted only when the toggle is on; off keeps the original third size.
+    monkeypatch.setattr(module, 'estimate_equity', lambda *a: (.92, 0.))
+    deep=replace(reraised, hole=('Kc','8d'), stacks=(800,800,200,200,200,200), legal=('call','fold',215,475,750,800))
+    assert module.GuardedEquityPolicy(32, stack_press=True).act(deep)==800
+    assert module.GuardedEquityPolicy(32).act(deep)==750
+    assert module.GuardedEquityPolicy(32).stack_press is False
+    # River overbet > 100 BB (200 units) with one pair (not strong) folds even if raw equity >= pot_odds.
+    monkeypatch.setattr(module, 'estimate_equity', lambda *a: (.53, .02))
+    river_overbet=replace(observation(('Kh','Ac'), ('6d','9s','7h','Ks','2s')),
+                          street=3, call=1007, pot=1258, legal=('call','fold',2098))
+    assert module.GuardedEquityPolicy(32).act(river_overbet)=='fold'
+
