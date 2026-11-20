@@ -44,6 +44,20 @@ def holding_range(known, board, preflop_raise, pressure):
     return tuple(pairs), tuple(cumulative), total
 
 
+def opponent_ranges(o, known, board, opponents):
+    """Public range prior per opponent position, from this hand's raise evidence."""
+    ranges = []
+    for pos in opponents:
+        actions = [h for h in o.history if h[1] == pos]
+        pre = any(h[2] == 0 and isinstance(h[3], int) for h in actions)
+        pressure = sum(h[2] > 0 and isinstance(h[3], int) for h in actions)
+        # Without a ledger, a current bet still signals at least one strong range.
+        if not o.history and o.call and pos == opponents[0]:
+            pressure = 1
+        ranges.append(holding_range(known, board, pre, pressure))
+    return ranges
+
+
 def estimate_equity(o, samples=256):
     """Expected showdown pot share and Monte Carlo standard error.
 
@@ -58,15 +72,7 @@ def estimate_equity(o, samples=256):
     opponents = [i for i, active in enumerate(o.active) if active and i != o.position]
     if not opponents:
         return 1.0, 0.0
-    ranges = []
-    for pos in opponents:
-        actions = [h for h in o.history if h[1] == pos]
-        pre = any(h[2] == 0 and isinstance(h[3], int) for h in actions)
-        pressure = sum(h[2] > 0 and isinstance(h[3], int) for h in actions)
-        # Without a ledger, a current bet still signals at least one strong range.
-        if not o.history and o.call and pos == opponents[0]:
-            pressure = 1
-        ranges.append(holding_range(known, board, pre, pressure))
+    ranges = opponent_ranges(o, known, board, opponents)
     seed = int.from_bytes(blake2b(repr((known, board, o.history, o.active, o.call)).encode(), digest_size=8).digest(), 'big')
     rng = Random(seed)
     total = square = 0.0

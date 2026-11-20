@@ -159,6 +159,11 @@ class FastGame:
         active = self.active
         return any(active[j] and stacks[j] + bets[j] > top for j in range(self.n) if j != i)
 
+    def cover(self, i):
+        """Most chips (bet + stack) any other live player can put in this street."""
+        stacks, bets, active = self.stacks, self.bets, self.active
+        return max((stacks[j] + bets[j] for j in range(self.n) if j != i and active[j]), default=0)
+
     def menu(self):
         """(pot, call, legal) for the actor, identical to Game.observe()."""
         i = self.actors[0]
@@ -174,8 +179,13 @@ class FastGame:
             sizes = {min(hi, max(lo, top + pot // 2)), min(hi, max(lo, top + pot))}
             if not self.lean >> i & 1:
                 sizes.update((lo, hi))
-            elif hi <= top + 2 * pot:
-                sizes.add(hi)
+            else:
+                # The lean all-in is the effective one: raising past the deepest
+                # opponent's total is pointless, so a deep actor still gets the
+                # "put them all in" option whenever that cover is <= a 2x-pot raise.
+                shove = min(hi, max(lo, self.cover(i)))
+                if shove <= top + 2 * pot:
+                    sizes.add(shove)
             legal.extend(sorted(sizes))
         return pot, min(stack, top - bets[i]), tuple(legal)
 

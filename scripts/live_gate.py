@@ -19,6 +19,8 @@ from poker.history_cfr import HistoryPolicy, load, COMPACT_VERSION
 from poker.equity_policy import EquityPolicy
 from poker.live_curriculum import root_game
 from poker.rule_opponents import RulePolicy
+from poker.fast_game import MIN_BET
+from poker import stack_press
 
 SCENARIOS = (
     ('six-50-tight',6,(50,)*6,'tight-v1'),
@@ -42,17 +44,41 @@ def digest(path):
     return h.hexdigest()
 
 
-HERO_FALLBACKS=('equity-v1','equity-guarded-v1','equity-guarded-v1+stack-press')
+HERO_FALLBACKS=('equity-v1','equity-guarded-v1','equity-guarded-v1+stack-press','equity-guarded-v2','equity-guarded-v2+stack-press')
 
 
 def make_policy(saved, learned=True, fallback='equity-v1'):
     p=HistoryPolicy(saved, min_visits=64, learned=learned)
     if fallback=='equity-v1':p.fallback=EquityPolicy()
     elif fallback in HERO_FALLBACKS:
-        from poker.equity_policy import GuardedEquityPolicy
-        p.fallback=GuardedEquityPolicy(stack_press=fallback.endswith('stack-press'))
+        from poker.equity_pricing import make_fallback
+        p.fallback=make_fallback(fallback.removesuffix('+stack-press'),stack_press=fallback.endswith('stack-press'))
     else:raise ValueError('unknown fallback')
     return p
+
+
+def press_sizes(hero, game):
+    """Stack Press sizes for the actor, built exactly as the live adapter builds them."""
+    if not stack_press.enabled(hero) or not game.can_raise():return ()
+    i=game.actors[0];bets,stacks=game.bets,game.stacks
+    top=max(bets);hi=stacks[i]+bets[i];lo=min(hi,max(game.raise_size,MIN_BET)+top)
+    opponents=[(bets[j],stacks[j]) for j in range(game.n) if j!=i and game.active[j]]
+    return stack_press.sizes(game.street,top,sum(game.paid),lo,hi,bets[i],stacks[i],opponents,game.menu()[2])
+
+
+def hero_decision(hero, game, o):
+    """The live adapter's decision path: the learned lookup sees the trained menu
+    ``o.legal``; Stack Press sizes are visible to the fallback only."""
+    return stack_press.act(hero,o,press_sizes(hero,game),history_complete=True)
+
+
+def play(game, o, action):
+    if action in o.legal:return game.act(action)
+    # A Stack Press size is off the trained menu, so FastGame.act cannot
+    # validate it; record it as act() would (press_sizes bounded it to [lo, hi]).
+    i=game.actors[0]
+    game.history.append((game.order[i],i,game.street,action,o.pot,o.call))
+    game.act(action,checked=False)
 
 
 _EVAL = None
@@ -80,13 +106,13 @@ def _evaluate_case(job):
                 o=game.observe()
                 if o.position==position:
                     before=hero.covered;start=time.perf_counter()
-                    action=hero.act(o,history_complete=True)
+                    action=hero_decision(hero,game,o)
                     latencies.append(time.perf_counter()-start)
                     used=hero.covered-before
                     decisions+=1;learned+=used
                     if o.street:post_decisions+=1;post_learned+=used
                 else:action=opponents[o.position].act(o)
-                game.act(action)
+                play(game,o,action)
             outcomes.append(game.payoffs[position]/2)
         blocks.append(mean(outcomes)*100)
     latencies.sort()
@@ -108,7 +134,7 @@ def evaluate(checkpoint, incumbent, out, seed, deals, fallback=False, hero_fallb
                 incumbent_sha256=digest(incumbent),fallback_only=fallback,seed=seed,deals=deals,min_visits=64,
                 fallback='equity-v1',hero_fallback=hero_fallback,scenarios=SCENARIOS,cases={})
     report['source_sha256']={p:digest(p) for p in ('scripts/live_gate.py','poker/history_cfr.py',
-        'poker/equity_policy.py','poker/live_curriculum.py','poker/fast_game.py','poker/rule_opponents.py')}
+        'poker/equity_policy.py','poker/stack_press.py','poker/live_curriculum.py','poker/fast_game.py','poker/rule_opponents.py')}
     global _EVAL
     _EVAL=(hero,opponent_saved,seed,deals)
     try:

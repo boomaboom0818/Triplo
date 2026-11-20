@@ -123,12 +123,21 @@ opt-in switch on the guarded fallback. The table client takes them as
 | **Classic + guarded fallback** | same | `equity-guarded-v1` | Same as Classic with the one-pair and JJ/QQ disasters removed. | Statistically no different from Classic in simulation (0.0 bb/100); the model plays most hands. |
 | **Guarded** (recommended default) | `runs/bot/pressure-fresh-001/base-guard.json` (stage-10 model + PressureGuard v1) | `equity-guarded-v1` | Mixed, tight and aggressive fields, and short or medium stacks. Best simulated average (58.2 bb/100, +11 over Classic) and +38 to +45 bb/100 against tight/aggressive 100 BB tables. | Fell from +32 to about -19 bb/100 against copies of the Classic model. That gap is not statistically significant but appeared in every guarded setup. |
 | **Guarded v2** | `runs/bot/pressure-fresh-001/stage-10-pressure-guard-v2.json` or `history-sustained-001-pressure-guard-v2.json` | `equity-guarded-v1` | Same niche as Guarded; v2 adds the JJ/QQ 100 BB cap, river-overbet fold and reraise limit inside the guard. Statistically tied with Guarded. | Not in the full nine-table screen for the stage-10 model. |
+| **Guarded + v2 fallback** (live since this change) | `runs/bot/pressure-fresh-001/base-guard.json` | `equity-guarded-v2` + `--opponent-stats runs/bot/opponent-stats.json` | Same as Guarded, plus side-pot-aware call pricing and bet sizing from each opponent's measured postflop calling stats (a player needs 20 faced bets before sizing adapts to them). | In duplicate play against five copies of Guarded it was even (about +0.2 ± 0.5 bb/100, `runs/bot/h2h-002`); the gain is expected against sticky callers, not against tight bots. |
 | **Any of the above + Stack Press** | any | `equity-guarded-v1` + `--stack-press` | Weak or loose fields (calling stations, over-callers) and deep stacks. In duplicate self-play it added +47 bb/100 at 100 BB and +117 bb/100 at 200 BB against rule bots. | Strictly more risk when you are beaten. No gain against an equal-strength field (0.0 bb/100) and untested against strong bots. Turn it off in tight, competitive games. |
+
+All lean-menu setups now offer the *effective* all-in: a raise to the deepest live
+opponent's total, so a deep stack can still put a short stack all in (it was offered
+only from our own stack before; worth about +9 bb/100 against callers when we are deep).
+Build or refresh the stats file from client traces with
+`python -m poker.opponent_stats runs/bot/*/trace.jsonl --out runs/bot/opponent-stats.json`;
+the client keeps it updated after every hand. `scripts.h2h_live` replays the same deals
+with a candidate in one seat against the deployed setup.
 
 Choosing quickly: unknown or mixed field, run **Guarded** without Stack Press; clearly
 soft table, add `--stack-press`; strong-bot table or if Guarded loses to
 trained-bot opponents, fall back to **Classic**. `--stack-press` only works with
-`--fallback equity-guarded-v1`; the client logs `Stack Press ON` or `OFF` at startup.
+an `equity-guarded` fallback; the client logs `Stack Press ON` or `OFF` at startup.
 
 Evidence and limits: these figures come from simulated tables (`runs/bot/deploy-combo-001`
 for model/guard/fallback combinations, `runs/bot/selfplay-ab-001` for Stack Press,

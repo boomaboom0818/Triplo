@@ -17,6 +17,7 @@ from poker.fast_game import LEAN_MENU
 from poker.game import Observation
 from poker import lean_cfr
 from poker import history_cfr
+from poker import stack_press
 from poker.openpoker_history import PublicHistory
 
 LOG = logging.getLogger(__name__)
@@ -41,7 +42,7 @@ def decision(snapshot, policy, public_history=(), history_complete=None):
     unit = lambda amount: round(amount / scale)
     offered = {a['action']: a for a in hero['valid_actions']}
     passive = 'check' if 'check' in offered else 'call' if 'call' in offered else None
-    legal, wire = [], {}
+    legal, wire, press = [], {}, []
     if passive:
         legal.append('call'); wire['call'] = {'action': passive}
     if 'fold' in offered and passive != 'check':
@@ -53,19 +54,30 @@ def decision(snapshot, policy, public_history=(), history_complete=None):
         # Retain exact advertised wire bounds even when normalization rounds.
         lean = getattr(policy, 'menu', None) == LEAN_MENU
         sizes = {} if lean else {unit(lo): lo, unit(hi): hi}
-        targets = [bet + pot // 2, bet + pot]
-        # Stack Press: deep stacks also get 2x-pot and half-stack sizes.
-        hero_stack = unit(seats[position]['stack'])
-        if getattr(getattr(policy, 'fallback', None), 'stack_press', False) and hero_stack > 200:
-            targets.extend((bet + 2 * pot, bet + max(2 * pot, hero_stack // 2)))
-        for n in targets:
+        for n in (bet + pot // 2, bet + pot):
             amount = min(hi, max(lo, round(n * scale)))
             sizes.setdefault(unit(amount), amount)
         # Lean checkpoints are trained without a bare minimum raise or deep all-in.
-        if lean and unit(hi) <= bet + 2 * pot:
-            sizes[unit(hi)] = hi
+        # Their all-in is the effective one (FastGame.menu): the deepest live
+        # opponent's total, so a deep hero can still put a short stack all in.
+        if lean:
+            me = seats[position]
+            cover = max((s['stack'] + s['bet'] for s in seats if s is not me and not s['folded']), default=0)
+            shove = min(hi, max(lo, cover))
+            if unit(shove) <= bet + 2 * pot:
+                sizes[unit(shove)] = shove
         for n, amount in sorted(sizes.items()):
             legal.append(n); wire[n] = {'action': 'raise', 'amount': amount}
+        # Stack Press sizes stay off the trained menu (and so off the learned
+        # key); poker.stack_press offers them to the fallback only.
+        if stack_press.enabled(policy):
+            me = seats[position]
+            opponents = [(unit(s['bet']), unit(s['stack'])) for s in seats if s is not me and not s['folded']]
+            for n in stack_press.sizes(len(snapshot['board']), bet, pot, unit(lo), unit(hi), unit(me['bet']),
+                                       unit(me['stack']), opponents, legal):
+                amount = min(hi, max(lo, round(n * scale)))
+                if unit(amount) not in wire:
+                    press.append(unit(amount)); wire[unit(amount)] = {'action': 'raise', 'amount': amount}
     elif 'all_in' in offered:
         n = unit(offered['all_in']['amount'])
         legal.append(n); wire[n] = {'action': 'all_in'}
@@ -102,12 +114,13 @@ def decision(snapshot, policy, public_history=(), history_complete=None):
         if hasattr(policy.fallback, 'last'):
             policy.fallback.last = None
         from poker.equity_policy import GuardedEquityPolicy
+        profiles = opponent_profiles(policy.fallback, seats, pad, position)
         if isinstance(policy.fallback, GuardedEquityPolicy) and history_complete is not True:
             observation = replace(observation, history=())
         if isinstance(policy, history_cfr.HistoryPolicy):
-            action = policy.act(observation, history_complete=history_complete is True)
+            action = stack_press.act(policy, observation, press, history_complete=history_complete is True)
         else:
-            action = policy.act(observation)
+            action = stack_press.act(policy, observation, press)
         covered = getattr(policy, 'covered', 0) > before
         if getattr(policy, 'safeguards', 0) > safeguards_before:
             source = 'poker_safeguard'
@@ -130,11 +143,34 @@ def decision(snapshot, policy, public_history=(), history_complete=None):
         decision.last['history_verified'] = history_complete is True
         decision.last['history_length'] = len(public_history)
         decision.last['observation'] = asdict(observation)
+    if press:
+        decision.last['stack_press_sizes'] = list(press)
+    if hasattr(policy, 'fallback') and profiles is not None:
+        decision.last['opponent_profiles'] = {str(p): [round(b, 3), round(k, 3)] for p, (b, k) in profiles.items()}
     equity_detail = getattr(getattr(policy, 'fallback', None), 'last', None)
     if not covered and equity_detail is not None:
         decision.last['equity_fallback'] = equity_detail
     return dict(type='action', hand_id=hand, turn_token=token,
                 client_action_id=str(uuid4()), **wire[action])
+
+
+def opponent_profiles(fallback, seats, pad, position):
+    """Install measured calling thresholds on an equity-guarded-v2 fallback.
+
+    Maps each live opponent's padded 6-max position to its fitted (base, slope)
+    from ``fallback.opponent_stats``; opponents without enough observations are
+    left out, which makes v2 keep v1's bet size. Returns None when not enabled.
+    """
+    stats = getattr(fallback, 'opponent_stats', None)
+    if stats is None:
+        return None
+    names = {}
+    for i, s in enumerate(seats):
+        p = i + pad if i >= 2 else i
+        if p != position and not s['folded'] and s.get('name'):
+            names[p] = s['name']
+    fallback.profiles = stats.profiles(names)
+    return fallback.profiles
 
 
 def active_game(key):
@@ -178,6 +214,8 @@ async def run(args, policy, key):
     stop_at = None if minutes is None else time.monotonic() + 60 * minutes
     seat = None
     history = PublicHistory()
+    stats = getattr(getattr(policy, 'fallback', None), 'opponent_stats', None)
+    stats_path = getattr(args, 'opponent_stats', None)
     def resync_request(table_id):
         return dict(type='resync_request', table_id=table_id,
                     last_table_seq=history.watermark if history.table_id == table_id else 0)
@@ -203,6 +241,8 @@ async def run(args, policy, key):
                             delay = 1
                     if kind != 'resync_response':
                         history.ingest(msg)
+                    if stats is not None:
+                        stats.ingest(msg)
                     if kind == 'connected':
                         game = await asyncio.to_thread(active_game, key)
                         if game.get('playing'):
@@ -254,6 +294,8 @@ async def run(args, policy, key):
                         sent_at.clear()
                         rejected.clear()
                         record(log, type='hand_result', seat=seat, result={k: v for k, v in msg.items() if k != 'type'})
+                        if stats is not None and stats_path is not None and stats.dirty:
+                            stats.save(stats_path)
                         # Stop only between hands so no live decision is abandoned.
                         if stop_at is not None and time.monotonic() >= stop_at:
                             LOG.info('Session time limit reached between hands')
@@ -294,13 +336,18 @@ def main():
                         help='lean only: use tight fallback below this normalized average mass (default: disabled)')
     parser.add_argument('--min-visits', type=int, default=64,
                         help='history model: minimum sampled average visits before using a learned row')
-    parser.add_argument('--fallback', choices=('tight-v1', 'equity-v1', 'equity-guarded-v1'), default='tight-v1',
+    parser.add_argument('--fallback', choices=('tight-v1', 'equity-v1', 'equity-guarded-v1', 'equity-guarded-v2'), default='tight-v1',
                         help='rule fallback for history/lean policies; equity-v1 uses bounded range sampling')
     parser.add_argument('--trace', type=Path, help='optional redacted public events and replay snapshots for diagnostics')
     parser.add_argument('--log', type=Path, help='append decisions and hand results as JSON lines')
     parser.add_argument('--stack-press', action=argparse.BooleanOptionalAction, default=False,
                         help='Stack Press: with equity-guarded-v1, near-nut hands may raise up to the '
                              'whole stack (good vs weaker fields, risky vs strong tight ones)')
+    parser.add_argument('--opponent-stats', type=Path,
+                        help='equity-guarded-v2: per-opponent postflop calling stats JSON (loaded, updated live, '
+                             'saved after each hand); enables value sizing for opponents with enough data')
+    parser.add_argument('--opponent-min-faced', type=int, default=20,
+                        help='faced postflop bets needed before an opponent gets a measured calling profile')
     parser.add_argument('--max-minutes', type=float, help='stop after the first completed hand past this many minutes')
     parser.add_argument('--stop-on-season-end', action='store_true',
                         help='exit when the current season ends instead of joining the next one')
@@ -333,16 +380,24 @@ def main():
         if args.min_support != 0:
             parser.error('--min-support requires a lean checkpoint')
         policy = CFRPolicy(saved['sums'], args.seed, saved['abstraction'])
-    if args.fallback in ('equity-v1', 'equity-guarded-v1'):
+    if args.fallback in ('equity-v1', 'equity-guarded-v1', 'equity-guarded-v2'):
         if not hasattr(policy, 'fallback'):
             parser.error('equity fallbacks require a history or lean checkpoint')
         from poker.equity_policy import EquityPolicy, GuardedEquityPolicy
-        if args.stack_press and args.fallback != 'equity-guarded-v1':
-            parser.error('--stack-press requires --fallback equity-guarded-v1')
-        policy.fallback = (GuardedEquityPolicy(stack_press=args.stack_press)
-                           if args.fallback == 'equity-guarded-v1' else EquityPolicy())
+        if args.stack_press and not args.fallback.startswith('equity-guarded'):
+            parser.error('--stack-press requires an equity-guarded fallback')
+        from poker.equity_pricing import make_fallback
+        policy.fallback = make_fallback(args.fallback, stack_press=args.stack_press)
         LOG.info('Fallback: %s (256 deterministic range samples), Stack Press %s',
                  args.fallback, 'ON' if args.stack_press else 'OFF')
+    if args.opponent_stats is not None:
+        if args.fallback != 'equity-guarded-v2':
+            parser.error('--opponent-stats requires --fallback equity-guarded-v2')
+        from poker.opponent_stats import OpponentStats
+        policy.fallback.opponent_stats = OpponentStats.load(args.opponent_stats, min_faced=args.opponent_min_faced)
+        stats = policy.fallback.opponent_stats
+        LOG.info('Opponent stats: %d players, %d with >= %d faced postflop bets', len(stats.players),
+                 sum(stats.faced(n) >= stats.min_faced for n in stats.players), stats.min_faced)
     try:
         asyncio.run(run(args, policy, key))
     except KeyboardInterrupt:
