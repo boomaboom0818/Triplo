@@ -44,8 +44,57 @@ def holding_range(known, board, preflop_raise, pressure):
     return tuple(pairs), tuple(cumulative), total
 
 
-def opponent_ranges(o, known, board, opponents):
+def line_labels(o, pos):
+    """Range-v3 evidence for one opponent: postflop (street, "street|action|faced") so far."""
+    out = []
+    for street in range(1, o.street + 1):
+        mine = [h for h in o.history if h[1] == pos and h[2] == street]
+        if not mine:
+            continue
+        if any(isinstance(h[3], int) for h in mine):
+            action = 'bet/raise'
+        elif any(h[3] == 'call' and h[5] > 0 for h in mine):
+            action = 'call'
+        elif any(h[3] == 'call' for h in mine):
+            action = 'check'
+        else:
+            continue
+        # A check was made before any bet (a later bet is still pending its answer).
+        faced = action != 'check' and any(isinstance(h[3], int) for h in o.history if h[2] == street and h[1] != pos)
+        out.append((street, '%s|%s|%d' % (('', 'flop', 'turn', 'river')[street], action, faced)))
+    return tuple(out)
+
+
+def _class_index(hole, board):
+    strong, top, pair = private_strength(hole, board)
+    return 0 if strong else 1 if top else 2 if pair else 3
+
+
+@lru_cache(maxsize=256)
+def calibrated_range(known, board, preflop_raise, lines):
+    """Range v3: v1 preflop prior times fitted per-line class multipliers
+    (poker.range_calibration), each evaluated on the board of its street."""
+    from .range_calibration import FACTORS
+    available = [c for c in range(52) if c not in known]
+    steps = [(board[:street + 2], FACTORS[label]) for street, label in lines if label in FACTORS]
+    pairs, cumulative, total = [], [], 0.0
+    for a, b in combinations(available, 2):
+        weight = preflop_weight(a, b, preflop_raise)
+        for street_board, factor in steps:
+            weight *= factor[_class_index((a, b), street_board)]
+        total += weight
+        pairs.append((a, b)); cumulative.append(total)
+    return tuple(pairs), tuple(cumulative), total
+
+
+def opponent_ranges(o, known, board, opponents, model='v1'):
     """Public range prior per opponent position, from this hand's raise evidence."""
+    if model == 'v3':
+        ranges = []
+        for pos in opponents:
+            pre = any(h[1] == pos and h[2] == 0 and isinstance(h[3], int) for h in o.history)
+            ranges.append(calibrated_range(known, board, pre, line_labels(o, pos)))
+        return ranges
     ranges = []
     for pos in opponents:
         actions = [h for h in o.history if h[1] == pos]
@@ -58,7 +107,7 @@ def opponent_ranges(o, known, board, opponents):
     return ranges
 
 
-def estimate_equity(o, samples=256):
+def estimate_equity(o, samples=256, model='v1'):
     """Expected showdown pot share and Monte Carlo standard error.
 
     No future betting or side-pot EV is modeled. History positions, not physical
@@ -72,7 +121,7 @@ def estimate_equity(o, samples=256):
     opponents = [i for i, active in enumerate(o.active) if active and i != o.position]
     if not opponents:
         return 1.0, 0.0
-    ranges = opponent_ranges(o, known, board, opponents)
+    ranges = opponent_ranges(o, known, board, opponents, model)
     seed = int.from_bytes(blake2b(repr((known, board, o.history, o.active, o.call)).encode(), digest_size=8).digest(), 'big')
     rng = Random(seed)
     total = square = 0.0
@@ -107,11 +156,13 @@ class EquityPolicy:
         self.preflop = RulePolicy('tight-v1')
         self.last = None
 
+    RANGE_MODEL = 'v1'
+
     def act(self, o):
         self.last = None
         if not o.street:
             return self.preflop.act(o)
-        equity, error = estimate_equity(o, self.samples)
+        equity, error = estimate_equity(o, self.samples, self.RANGE_MODEL)
         opponents = sum(o.active) - 1
         price = o.call / max(1, o.pot + o.call)
         # Account conservatively for sampling noise and unrealized future equity.
@@ -211,7 +262,7 @@ class GuardedEquityPolicy(EquityPolicy):
             return 'call' if not o.call or committed + o.call <= limit else ('fold' if 'fold' in o.legal else 'call')
 
         self.last = None
-        equity, error = estimate_equity(o, self.samples)
+        equity, error = estimate_equity(o, self.samples, self.RANGE_MODEL)
         opponents = sum(o.active) - 1
         price = o.call / max(1, o.pot + o.call)
         usable = equity * (1.0 if o.street == 3 else .90) - error

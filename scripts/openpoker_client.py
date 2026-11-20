@@ -336,7 +336,7 @@ def main():
                         help='lean only: use tight fallback below this normalized average mass (default: disabled)')
     parser.add_argument('--min-visits', type=int, default=64,
                         help='history model: minimum sampled average visits before using a learned row')
-    parser.add_argument('--fallback', choices=('tight-v1', 'equity-v1', 'equity-guarded-v1', 'equity-guarded-v2'), default='tight-v1',
+    parser.add_argument('--fallback', choices=('tight-v1', 'equity-v1', 'equity-guarded-v1', 'equity-guarded-v2', 'equity-guarded-v3'), default='tight-v1',
                         help='rule fallback for history/lean policies; equity-v1 uses bounded range sampling')
     parser.add_argument('--trace', type=Path, help='optional redacted public events and replay snapshots for diagnostics')
     parser.add_argument('--log', type=Path, help='append decisions and hand results as JSON lines')
@@ -380,7 +380,7 @@ def main():
         if args.min_support != 0:
             parser.error('--min-support requires a lean checkpoint')
         policy = CFRPolicy(saved['sums'], args.seed, saved['abstraction'])
-    if args.fallback in ('equity-v1', 'equity-guarded-v1', 'equity-guarded-v2'):
+    if args.fallback in ('equity-v1', 'equity-guarded-v1', 'equity-guarded-v2', 'equity-guarded-v3'):
         if not hasattr(policy, 'fallback'):
             parser.error('equity fallbacks require a history or lean checkpoint')
         from poker.equity_policy import EquityPolicy, GuardedEquityPolicy
@@ -391,8 +391,8 @@ def main():
         LOG.info('Fallback: %s (256 deterministic range samples), Stack Press %s',
                  args.fallback, 'ON' if args.stack_press else 'OFF')
     if args.opponent_stats is not None:
-        if args.fallback != 'equity-guarded-v2':
-            parser.error('--opponent-stats requires --fallback equity-guarded-v2')
+        if args.fallback not in ('equity-guarded-v2', 'equity-guarded-v3'):
+            parser.error('--opponent-stats requires --fallback equity-guarded-v2 or -v3')
         from poker.opponent_stats import OpponentStats
         policy.fallback.opponent_stats = OpponentStats.load(args.opponent_stats, min_faced=args.opponent_min_faced)
         stats = policy.fallback.opponent_stats

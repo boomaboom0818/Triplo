@@ -128,7 +128,7 @@ def share(hero, scores, subset):
     return 1.0 / (1 + sum(scores[j] == hero for j in subset)) if best == hero else 1.0
 
 
-def sample_showdowns(o, samples):
+def sample_showdowns(o, samples, model='v1'):
     """One joint draw per sample: hero score, opponent scores and strength percentiles.
 
     Opponent holdings are drawn jointly from v1's range priors with whole-draw
@@ -138,7 +138,7 @@ def sample_showdowns(o, samples):
     board = tuple(CARD_ID[c] for c in o.board)
     known = tuple(sorted(hole + board))
     opponents = [i for i, active in enumerate(o.active) if active and i != o.position]
-    ranges = opponent_ranges(o, known, board, opponents)
+    ranges = opponent_ranges(o, known, board, opponents, model)
     table = strength_table(tuple(sorted(board)))
     seed = int.from_bytes(blake2b(repr(('v2', known, board, o.history, o.active, o.call)).encode(),
                                   digest_size=8).digest(), 'big')
@@ -193,7 +193,7 @@ class GuardedEquityPolicyV2(GuardedEquityPolicy):
 
     def draws(self, o):
         if self._draws is None:
-            self._draws = sample_showdowns(o, self.samples)
+            self._draws = sample_showdowns(o, self.samples, self.RANGE_MODEL)
         return self._draws
 
     # -- pot-by-pot call pricing -------------------------------------------
@@ -289,7 +289,23 @@ class GuardedEquityPolicyV2(GuardedEquityPolicy):
         return chosen
 
 
-FALLBACKS = ('equity-v1', 'equity-guarded-v1', VERSION)
+VERSION_V3 = 'equity-guarded-v3'
+
+
+class GuardedEquityPolicyV3(GuardedEquityPolicyV2):
+    """``equity-guarded-v2`` with opponent ranges calibrated on real showdowns.
+
+    Every decision rule is v2's; only the range model changes (range model v3,
+    ``poker.equity_policy.calibrated_range``): the v1 preflop prior times one
+    fitted multiplier per hand class for each postflop line an opponent took
+    (bet/raise, call or check, and whether someone else bet or raised that
+    street), replacing v1's hand-set "pressure" weights.
+    """
+    VERSION = VERSION_V3
+    RANGE_MODEL = 'v3'
+
+
+FALLBACKS = ('equity-v1', 'equity-guarded-v1', VERSION, VERSION_V3)
 
 
 def make_fallback(name, stack_press=False, **options):
@@ -300,4 +316,6 @@ def make_fallback(name, stack_press=False, **options):
         return GuardedEquityPolicy(stack_press=stack_press, **options)
     if name == VERSION:
         return GuardedEquityPolicyV2(stack_press=stack_press, **options)
+    if name == VERSION_V3:
+        return GuardedEquityPolicyV3(stack_press=stack_press, **options)
     raise ValueError('unknown equity fallback: %s' % name)
