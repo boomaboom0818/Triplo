@@ -70,18 +70,41 @@ def _class_index(hole, board):
     return 0 if strong else 1 if top else 2 if pair else 3
 
 
+@lru_cache(maxsize=64)
+def _board_classes(board):
+    """Class lookup by a*52+b for each compatible a<b on a postflop board.
+
+    A flush/straight flush needs at least three board cards of one suit.
+    Otherwise only hole ranks matter; when such a suit exists, also
+    distinguish whether each hole card belongs to it. The table does not
+    depend on hero blockers or opponent lines and can serve all ranges.
+    """
+    suits = [c & 3 for c in board]
+    flush_suit = next((s for s in range(4) if suits.count(s) >= 3), -1)
+    codes = [(c >> 2) * 2 + ((c & 3) == flush_suit) for c in range(52)]
+    table = bytearray(52 * 52)
+    seen = {}
+    for a, b in combinations((c for c in range(52) if c not in board), 2):
+        key = codes[a] * 26 + codes[b]
+        if key not in seen:
+            seen[key] = _class_index((a, b), board)
+        table[a * 52 + b] = seen[key]
+    return bytes(table)
+
+
 @lru_cache(maxsize=256)
 def calibrated_range(known, board, preflop_raise, lines):
     """Range v3: v1 preflop prior times fitted per-line class multipliers
     (poker.range_calibration), each evaluated on the board of its street."""
     from .range_calibration import FACTORS
     available = [c for c in range(52) if c not in known]
-    steps = [(board[:street + 2], FACTORS[label]) for street, label in lines if label in FACTORS]
+    steps = [(_board_classes(board[:street + 2]), FACTORS[label]) for street, label in lines if label in FACTORS]
     pairs, cumulative, total = [], [], 0.0
     for a, b in combinations(available, 2):
         weight = preflop_weight(a, b, preflop_raise)
-        for street_board, factor in steps:
-            weight *= factor[_class_index((a, b), street_board)]
+        slot = a * 52 + b
+        for classes, factor in steps:
+            weight *= factor[classes[slot]]
         total += weight
         pairs.append((a, b)); cumulative.append(total)
     return tuple(pairs), tuple(cumulative), total

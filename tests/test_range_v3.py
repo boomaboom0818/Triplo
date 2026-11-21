@@ -1,5 +1,10 @@
 """equity-guarded-v3: opponent ranges calibrated on real showdowns."""
-from poker.equity_policy import calibrated_range, estimate_equity, line_labels
+from itertools import combinations
+from random import Random
+
+import pytest
+
+from poker.equity_policy import _board_classes, _class_index, calibrated_range, estimate_equity, line_labels, preflop_weight
 from poker.equity_pricing import GuardedEquityPolicyV2, GuardedEquityPolicyV3, make_fallback
 from poker.fast_eval import CARD_ID
 from poker.game import Observation
@@ -60,3 +65,38 @@ def test_v3_estimates_differ_from_v1_only_through_the_range_model():
     # Preflop decisions do not use ranges: identical to v2.
     pre = Observation(2, 2, ('Kh', 'Kd'), (), (200,) * 6, (True,) * 6, 3, 2, 0, ('call', 'fold', 5, 7), ())
     assert GuardedEquityPolicyV3().act(pre) == GuardedEquityPolicyV2().act(pre)
+
+
+def test_board_class_cache_matches_direct_evaluation():
+    rng = Random(6372)
+    boards = [tuple(rng.sample(range(52), n)) for n in (3, 4, 5) for _ in range(10)]
+    for cards in (
+        '4h 5h 6h',      # both hole cards may complete a flush or straight flush
+        '4h 5h 6h 5s',   # suit and rank both matter on a paired board
+        '4h 5h 6h 7h 2c',
+        'Ts Js Qs Ks As',  # board-only royal flush
+        '8s 8h 8c 8d 2c',
+        '3s 3d 4c 4d',
+    ):
+        boards.append(tuple(CARD_ID[c] for c in cards.split()))
+    for board in boards:
+        table = _board_classes(board)
+        for a, b in combinations((c for c in range(52) if c not in board), 2):
+            assert table[a * 52 + b] == _class_index((a, b), board)
+
+
+@pytest.mark.parametrize('raised, blockers', [(False, 'Ac 7s'), (True, '7h 2c')])
+def test_lookup_preserves_exact_range_weights_and_pair_order(raised, blockers):
+    board = tuple(CARD_ID[c] for c in '8h 6h 2h 8d 9h'.split())
+    known = tuple(sorted((*board, *(CARD_ID[c] for c in blockers.split()))))
+    lines = ((1, 'flop|bet/raise|1'), (2, 'turn|call|1'), (3, 'river|bet/raise|0'))
+    pairs = tuple(combinations((c for c in range(52) if c not in known), 2))
+    total, cumulative = 0., []
+    for a, b in pairs:
+        weight = preflop_weight(a, b, raised)
+        for street, label in lines:
+            weight *= FACTORS[label][_class_index((a, b), board[:street + 2])]
+        total += weight
+        cumulative.append(total)
+    # Same sums and pair order are required for identical deterministic draws.
+    assert calibrated_range(known, board, raised, lines) == (pairs, tuple(cumulative), total)
