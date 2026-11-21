@@ -1,11 +1,14 @@
 from copy import deepcopy
 import json
+import sys
 
 import pytest
 
+from poker import history_cfr
 from poker.equity_pricing import make_fallback
 from poker.history_cfr import HistoryPolicy
 from poker.late_position import FoldEvidence, LatePositionSteals
+from scripts import openpoker_client
 from scripts.fit_late_position import fit, record_open
 from scripts.openpoker_client import decision
 
@@ -24,12 +27,11 @@ def snapshot():
                                          dict(action='raise', min=40, max=2000)]))
 
 
-def policy(evidence=None, report=False):
+def policy(evidence=None):
     p = HistoryPolicy(dict(sums={}, visits={}, stack_bb=100))
     p.fallback = make_fallback('equity-guarded-v3')
     if evidence is not None:
-        p.late_position_steals = LatePositionSteals('Triplo', {(5, ('SB', 'BB')): evidence})
-        p.late_position_report = report
+        p.fallback.late_position_evidence = LatePositionSteals('Triplo', {(5, ('SB', 'BB')): evidence})
     return p
 
 
@@ -37,7 +39,7 @@ def wire_action(a):
     return {k: v for k, v in a.items() if k != 'client_action_id'}
 
 
-def test_overlay_changes_only_a_baseline_fold_and_keeps_exact_wire_amount():
+def test_v3_steal_changes_a_baseline_fold_and_keeps_exact_wire_amount():
     s = snapshot()
     baseline = decision(s, policy(), FOLDS, True)
     assert baseline['action'] == 'fold'
@@ -49,19 +51,53 @@ def test_overlay_changes_only_a_baseline_fold_and_keeps_exact_wire_amount():
     assert 'late_position_steal' not in a
 
 
-def test_report_mode_keeps_learned_action_and_logs_proposal():
+def test_v3_replaces_a_learned_fold_and_logs_its_source():
     s = snapshot()
-    p = policy(FoldEvidence((30, 30), (15, 15)), report=True)
+    p = policy(FoldEvidence((30, 30), (15, 15)))
     p.key = lambda _: 'known'
     p.sums['known'], p.visits['known'] = [0, 1, 0, 0], 64
-    assert decision(s, p, FOLDS, True)['action'] == 'fold'
-    assert decision.last['covered'] is True
-    assert decision.last['decision_source'] == 'learned_policy'
-    assert decision.last['late_position_steal']['applied'] is False
-    p.late_position_report = False
     assert decision(s, p, FOLDS, True)['action'] == 'raise'
     assert decision.last['covered'] is False
-    assert decision.last['late_position_steal']['baseline_covered'] is True
+    detail = decision.last['late_position_steal']
+    assert detail['baseline_covered'] is True
+    assert detail['baseline_source'] == 'learned_policy'
+
+
+@pytest.mark.parametrize('fallback,evidence,expected', [
+    ('equity-guarded-v3', 'qualifying', 'raise'),
+    ('equity-guarded-v3', 'missing', 'fold'),
+    ('equity-guarded-v3', 'invalid', None),
+    ('equity-guarded-v2', 'qualifying', 'fold'),
+])
+def test_client_loads_v3_evidence_without_a_flag(tmp_path, monkeypatch, capsys, fallback, evidence, expected):
+    monkeypatch.chdir(tmp_path)
+    checkpoint = tmp_path / 'checkpoint.json'
+    checkpoint.write_text(json.dumps(dict(schema=1, algorithm=history_cfr.ALGORITHM,
+                                          abstraction=history_cfr.VERSION, menu=history_cfr.LEAN_MENU,
+                                          players=6, stack_bb=100, iterations=0, sums={}, visits={})))
+    path = tmp_path / 'runs/bot/late-position-folds.json'
+    if evidence != 'missing':
+        path.parent.mkdir(parents=True)
+        data = dict(schema=1, hero='Triplo', lineups=[dict(position=5, behind=['SB', 'BB'],
+                                                           train=[30, 30], holdout=[15, 15])])
+        path.write_text(json.dumps(data) if evidence == 'qualifying' else '{}')
+    actions = []
+
+    async def fake_run(args, policy, key):
+        actions.append(decision(snapshot(), policy, FOLDS, True)['action'])
+
+    monkeypatch.setattr(openpoker_client, 'run', fake_run)
+    monkeypatch.setenv('OPEN_POKER_API_KEY', 'test-placeholder')
+    monkeypatch.setattr(sys, 'argv', ['client', '--checkpoint', str(checkpoint), '--fallback', fallback])
+    if expected is None:
+        with pytest.raises(SystemExit) as exc:
+            openpoker_client.main()
+        assert exc.value.code == 2
+        assert 'cannot load late-position evidence' in capsys.readouterr().err
+        assert not actions
+    else:
+        openpoker_client.main()
+        assert actions == [expected]
 
 
 @pytest.mark.parametrize('evidence', [FoldEvidence((29, 29), (15, 15)), FoldEvidence((30, 30), (14, 14)),
@@ -87,11 +123,11 @@ def test_out_of_scope_has_identical_wire_and_diagnostics(case):
     if case == 'postflop': s['board'] = ['2c', '4d', 'As']
     v3 = wire_action(decision(s, policy(), history, verified))
     diagnostics = deepcopy(decision.last)
-    overlay = wire_action(decision(s, policy(FoldEvidence((30, 30), (15, 15))), history, verified))
-    assert v3 == overlay and diagnostics == decision.last
+    with_evidence = wire_action(decision(s, policy(FoldEvidence((30, 30), (15, 15))), history, verified))
+    assert v3 == with_evidence and diagnostics == decision.last
 
 
-def test_overlay_does_not_replace_a_learned_limp_or_raise():
+def test_v3_steal_does_not_replace_a_learned_limp_or_raise():
     p = policy(FoldEvidence((30, 30), (15, 15)))
     p.key = lambda _: 'known'; p.visits['known'] = 64
     for row, expected in (([1, 0, 0, 0], 'call'), ([0, 0, 1, 0], 'raise')):
@@ -116,7 +152,7 @@ def test_cutoff_and_small_blind_use_their_own_remaining_lineup(pos, behind, hist
         if i == pos:
             seat['name'] = 'Triplo'
     p = policy(FoldEvidence((30, 30), (15, 15)))
-    p.late_position_steals.evidence[(pos, behind)] = FoldEvidence((30, 30), (15, 15))
+    p.fallback.late_position_evidence.evidence[(pos, behind)] = FoldEvidence((30, 30), (15, 15))
     a = decision(s, p, history, True)
     assert a['action'] == 'raise' and a['amount'] == 50
     assert decision.last['late_position_steal']['required'] == (0.6014 if pos == 0 else 0.655)

@@ -293,16 +293,25 @@ VERSION_V3 = 'equity-guarded-v3'
 
 
 class GuardedEquityPolicyV3(GuardedEquityPolicyV2):
-    """``equity-guarded-v2`` with opponent ranges calibrated on real showdowns.
+    """``equity-guarded-v2`` with calibrated ranges and evidence-gated live opens.
 
-    Every decision rule is v2's; only the range model changes (range model v3,
-    ``poker.equity_policy.calibrated_range``): the v1 preflop prior times one
-    fitted multiplier per hand class for each postflop line an opponent took
-    (bet/raise, call or check, and whether someone else bet or raised that
-    street), replacing v1's hand-set "pressure" weights.
+    The range model (``poker.equity_policy.calibrated_range``) replaces v1's
+    hand-set pressure weights with fitted hand-class multipliers by postflop
+    line. Late-position opens additionally need verified live history and the
+    exact wire amounts and opponent names, which are not in ``Observation``.
     """
     VERSION = VERSION_V3
     RANGE_MODEL = 'v3'
+
+    def __init__(self, samples=256, stack_press=False, profiles=None):
+        super().__init__(samples, stack_press, profiles)
+        self.late_position_evidence = None
+
+    def late_position_open(self, o, action, seats, bb, pot, wire, *, history_complete):
+        """Check the final action, including folds from the learned policy."""
+        if history_complete is True and self.late_position_evidence is not None:
+            return self.late_position_evidence.propose(o, action, seats, bb, pot, wire)
+        return None
 
 
 FALLBACKS = ('equity-v1', 'equity-guarded-v1', VERSION, VERSION_V3)

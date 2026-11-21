@@ -118,6 +118,15 @@ python scripts/openpoker_client.py --checkpoint runs/bot/pressure-fresh-001/base
   --min-visits 64 --fallback equity-guarded-v3 --opponent-stats runs/bot/opponent-stats.json
 ```
 
+**Late-Position Steals is built into `equity-guarded-v3` for history checkpoints.**
+The client automatically reads `runs/bot/late-position-folds.json` at startup.
+It can turn a fold into a 2.5 BB open from the cutoff, button, or small blind
+only with qualifying fold evidence for the exact remaining lineup. If the file
+is absent or no lineup qualifies, the original action stands. The initial data
+check found no qualifying lineups and did not establish live profitability. See
+the [OpenPoker client setup](docs/openpoker.md) and the
+[Late-Position Steals fitting guide](docs/LATE-POSITION-STEALS.md).
+
 A deployment is three independent choices: the **model** (`--checkpoint`), an optional
 **PressureGuard** baked into that checkpoint, and the **fallback** (`--fallback`) that
 plays states the model has not learned. **Stack Press** (`--stack-press`) is an extra
