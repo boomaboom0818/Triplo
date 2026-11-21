@@ -1,8 +1,8 @@
 # Late-Position Steals
 
-Late-Position Steals is an opt-in overlay on `equity-guarded-v3` for history
-checkpoints. It keeps the checkpoint, rules, equity ranges, and postflop sizing. It can replace a v3
-**fold** with a **2.5 BB raise** from the cutoff, button, or small blind when:
+Late-Position Steals is built into `equity-guarded-v3` for OpenPoker history
+checkpoints. It keeps the checkpoint, equity ranges, and postflop sizing. It can
+replace a **fold** with a **2.5 BB raise** from the cutoff, button, or small blind when:
 
 - Six players were dealt in. A verified history and exact raw-chip ledger show
   that everyone before us folded, without limps, raises, or extra money.
@@ -21,7 +21,7 @@ selection across lineups also limit what the intervals establish. The rule
 leaves unknown names, sparse profiles, short tables, calls, and existing raises
 alone. It does not automatically fit or refresh stats from the live process.
 
-## Fit and shadow
+## Fit and run
 
 Provide a JSON array of completed public OpenPoker hand-evidence records,
 including wins **and losses**. Each record needs the hand ID, start/end times,
@@ -36,24 +36,19 @@ PYTHONPATH=. .venv/bin/python -m scripts.fit_late_position evidence.json \
   --out runs/bot/late-position-folds.json
 ```
 
-To shadow it, use the same checkpoint, profile file, and sizing options as v3,
-and add these arguments to the client invocation:
-
-```text
---fallback equity-guarded-v3 --late-position-steals runs/bot/late-position-folds.json
---late-position-report --log runs/bot/late-position-shadow.jsonl
-```
-
-Report mode logs a `late_position_steal` diagnostic for qualified proposals
-but sends the unchanged v3 action. The diagnostic records the baseline source,
-counts, bounds, exact proposed amount, and whether it was applied. Without
-`--late-position-report`, explicitly enabling the overlay applies qualified opens. No
-default or running service has been changed.
+Run the [OpenPoker client](openpoker.md) from the repository root with a history
+checkpoint and `--fallback equity-guarded-v3`. The client reads
+`runs/bot/late-position-folds.json` once at startup and applies qualifying opens
+automatically. If the file is absent or the lineup does not qualify, it keeps
+the original action. An invalid file is a startup error. The old
+`--late-position-steals` and `--late-position-report` switches are no longer
+accepted. Use `--log PATH` to record applied steals, including the baseline
+source, evidence counts, fold bound, and exact raise amount.
 
 Initial data check: among the **881** v3 hands through 2026-11-21 06:43 UTC,
 there were **22** matching opens, including **two** won immediately and **20**
 that drew a continuation. There were **15 older and seven newer** opens spread
 across 18 lineups, so **none** qualified. This is intentionally fail-closed. The
 earlier synthetic pilot used unconditional late-position opens and is not a
-validation of this gated policy. Collect more eligible hands and compare both
-hands won and BB/100 before deploying it.
+validation of this rule. Measure both hands won and BB/100 on more eligible
+hands before drawing conclusions about live profitability.

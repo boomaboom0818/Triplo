@@ -13,15 +13,17 @@ from urllib.request import Request, urlopen
 
 from poker.cfr import CFRPolicy, information_key
 from poker.config import load_checkpoint
-from poker.equity_pricing import FALLBACKS, VERSION_V3, make_fallback
+from poker.equity_pricing import FALLBACKS, VERSION_V3, GuardedEquityPolicyV3, make_fallback
 from poker.fast_game import LEAN_MENU
 from poker.game import Observation
+from poker.late_position import LatePositionSteals
 from poker import lean_cfr
 from poker import history_cfr
 from poker import stack_press
 from poker.openpoker_history import PublicHistory
 
 LOG = logging.getLogger(__name__)
+LATE_POSITION_EVIDENCE = Path('runs/bot/late-position-folds.json')
 
 
 def decision(snapshot, policy, public_history=(), history_complete=None):
@@ -137,15 +139,14 @@ def decision(snapshot, policy, public_history=(), history_complete=None):
     else:
         action = policy.act(observation)
     steal_detail = None
-    steals = getattr(policy, 'late_position_steals', None)
-    if steals is not None and history_complete is True and isinstance(policy, history_cfr.HistoryPolicy):
-        proposed = steals.propose(observation, action, seats, snapshot['big_blind'], snapshot['pot'], wire)
+    if isinstance(policy, history_cfr.HistoryPolicy) and isinstance(policy.fallback, GuardedEquityPolicyV3):
+        proposed = policy.fallback.late_position_open(
+            observation, action, seats, snapshot['big_blind'], snapshot['pot'], wire,
+            history_complete=history_complete)
         if proposed is not None:
             target, steal_detail = proposed
-            apply = not policy.late_position_report
-            steal_detail.update(applied=apply, baseline_source=source, baseline_covered=covered)
-            if apply:
-                action, source, covered = target, 'late_position_steal', False
+            steal_detail.update(applied=True, baseline_source=source, baseline_covered=covered)
+            action, source, covered = target, 'late_position_steal', False
     LOG.info('Decision street=%s active=%s covered=%s action=%s',street,sum(observation.active),covered,wire[action]['action'])
     # Diagnostics for the optional session log; never sent on the wire.
     decision.last = dict(hand_id=hand, seat=hero['seat'], street=street, active=sum(observation.active),
@@ -350,11 +351,8 @@ def main():
     parser.add_argument('--min-visits', type=int, default=64,
                         help='history model: minimum sampled average visits before using a learned row')
     parser.add_argument('--fallback', choices=('tight-v1', *FALLBACKS), default='tight-v1',
-                         help='rule fallback for history/lean policies; equity-v1 uses bounded range sampling')
-    parser.add_argument('--late-position-steals', type=Path, metavar='FOLD_EVIDENCE_JSON',
-                        help='opt in to opponent-aware late-position opens on top of equity-guarded-v3')
-    parser.add_argument('--late-position-report', action='store_true',
-                        help='log qualified late-position opens without changing the action')
+                         help='rule fallback for history/lean policies; equity-guarded-v3 automatically '
+                              f'uses late-position evidence from {LATE_POSITION_EVIDENCE} for history checkpoints')
     parser.add_argument('--trace', type=Path, help='optional redacted public events and replay snapshots for diagnostics')
     parser.add_argument('--log', type=Path, help='append decisions and hand results as JSON lines')
     parser.add_argument('--stack-press', action=argparse.BooleanOptionalAction, default=False,
@@ -369,12 +367,6 @@ def main():
     parser.add_argument('--stop-on-season-end', action='store_true',
                         help='exit when the current season ends instead of joining the next one')
     args = parser.parse_args()
-    if args.late_position_steals is not None and args.fallback != VERSION_V3:
-        parser.error(f'--late-position-steals requires --fallback {VERSION_V3}')
-    if args.late_position_report and args.late_position_steals is None:
-        parser.error('--late-position-report requires --late-position-steals')
-    if args.late_position_report and args.log is None:
-        parser.error('--late-position-report requires --log')
     if json.loads(args.checkpoint.read_text()).get('algorithm') in history_cfr.ALGORITHMS:
         saved = history_cfr.load(args.checkpoint)
     else:
@@ -411,17 +403,16 @@ def main():
         policy.fallback = make_fallback(args.fallback, stack_press=args.stack_press)
         LOG.info('Fallback: %s (256 deterministic range samples), Stack Press %s',
                  args.fallback, 'ON' if args.stack_press else 'OFF')
-    if args.late_position_steals is not None:
-        if not isinstance(policy, history_cfr.HistoryPolicy):
-            parser.error('--late-position-steals requires a history checkpoint')
-        from poker.late_position import LatePositionSteals
+    if args.fallback == VERSION_V3 and isinstance(policy, history_cfr.HistoryPolicy):
         try:
-            policy.late_position_steals = LatePositionSteals.load(args.late_position_steals)
+            evidence = LatePositionSteals.load(LATE_POSITION_EVIDENCE)
+        except FileNotFoundError:
+            LOG.info('Late-Position Steals: no evidence file at %s', LATE_POSITION_EVIDENCE)
         except (OSError, ValueError) as exc:
-            parser.error(f'cannot load late-position evidence: {exc}')
-        policy.late_position_report = args.late_position_report
-        LOG.info('Late-Position Steals: %s (%d saved lineups)', 'report' if args.late_position_report else 'apply',
-                 len(policy.late_position_steals.evidence))
+            parser.error(f'cannot load late-position evidence from {LATE_POSITION_EVIDENCE}: {exc}')
+        else:
+            policy.fallback.late_position_evidence = evidence
+            LOG.info('Late-Position Steals: loaded %d saved lineups', len(evidence.evidence))
     if args.opponent_stats is not None:
         if args.fallback not in ('equity-guarded-v2', VERSION_V3):
             parser.error('--opponent-stats requires --fallback equity-guarded-v2 or -v3')
