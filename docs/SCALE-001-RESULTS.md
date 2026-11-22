@@ -76,5 +76,17 @@ flattened in decision coverage, but payoff did not improve between 2.0M and 2.9M
 The new model has sha256 `d553036c8e2b5a4d7e590d15195486c6b2387fdfedb6ead19a8469261a9d7674`.
 The previous model (sha256 `f3ed3b73…`) is kept at
 `runs/bot/pressure-fresh-001/base-guard-969520.json`; to roll back, copy it over
-`base-guard.json` and restart the client. Model files are under `runs/`, which is
-not tracked in git (each is about 575 MB).
+`base-guard.json` and restart the client.
+
+## Download
+
+Model files live under `runs/`, which git does not track. The new model (843 MB,
+174 MB compressed) is attached to the
+[`base-guard-2001520` release](https://github.com/boomaboom0818/Triplo/releases/tag/base-guard-2001520):
+
+```
+gh release download base-guard-2001520 -R boomaboom0818/Triplo -p 'base-guard-2001520.json.zst'
+zstd -d base-guard-2001520.json.zst -o runs/bot/pressure-fresh-001/base-guard.json
+```
+
+Compressed sha256 `38e620da3f7ff8a1f5e1768e39de285c893d8bf358dd39cc116675ea742bcfde`.
