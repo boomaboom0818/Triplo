@@ -9,6 +9,13 @@ Earlier short continuations (+15,000 to +39,000 iterations) were flat or slightl
 negative (`docs/LIVE-CONDITION-TRAINING.md`, `pressure-fresh-001`). This run added
 about 1.9M iterations, roughly 3x the original training.
 
+## Rebuilding the weights
+
+Model weights are not committed: everything under `runs/` is gitignored, and the
+model alone is 843 MB. Rebuild it from the code with the steps below. The parent
+state `runs/bot/aggressive-stages-001/training/state` comes from the earlier
+training chain described in `docs/LIVE-CONDITION-TRAINING.md`.
+
 ## Training
 
 Same recipe as the parent, forked from `runs/bot/aggressive-stages-001/training/state`
@@ -27,9 +34,13 @@ session teardown right after a complete save at 1,176,520 iterations and resumed
 with `--resume`; the resumed run reproduced the killed run's progress exactly.
 It stopped at its deadline at 2,886,520 iterations and 16.6M table rows.
 
-Each snapshot was turned into a guarded checkpoint with
-`python -m scripts.export_pressure_guard --version equity-pressure-v1`, exactly as
-the previous base-guard was.
+Each snapshot was turned into a guarded checkpoint exactly as the previous
+base-guard was; this produces the deployed model (sha256 `d553036c…`):
+
+```
+python -m scripts.export_pressure_guard --checkpoint runs/bot/scale-001/trained/snapshot-2001520.json \
+  --out runs/bot/pressure-fresh-001/base-guard.json --version equity-pressure-v1
+```
 
 ## Evaluation
 
@@ -38,6 +49,13 @@ hero fallback `equity-guarded-v4`, incumbent opponent
 `runs/bot/history-sustained-001/checkpoint.json`. Every arm plays identical deals,
 so differences are paired per block and averaged with equal weight over the nine
 setups. Intervals are 95%.
+
+```
+python -m scripts.live_gate evaluate --checkpoint <guard.json> \
+  --incumbent runs/bot/history-sustained-001/checkpoint.json \
+  --out <eval.json> --seed 87419000 --deals 2400 --hero-fallback equity-guarded-v4
+python -m scripts.paired_compare --baseline <eval-old-guard.json> <eval-new-guard.json>
+```
 
 ### Development seed 93,531,000
 
@@ -61,7 +79,9 @@ Bonferroni 97.5% lower bound (z = 2.24).
 | 2,001,520 | +6.67 | [+1.08, +12.25] | +0.29 | +11.83 | **Pass** |
 | 2,886,520 | +6.53 | [-0.15, +13.20] | -1.11 | +24.83 | Narrow miss |
 
-The 2,001,520 model passed on both seeds and was promoted. Training past about
+The 2,001,520 model passed on both seeds and was promoted. The confirmation was
+rerun with the committed `equity-guarded-v4` code (release `6a20179`) and every
+block matched the original run exactly. Training past about
 2M iterations added no measurable value. No setup showed a significant loss.
 p99 decision latency stayed about 7 ms.
 
@@ -77,16 +97,3 @@ The new model has sha256 `d553036c8e2b5a4d7e590d15195486c6b2387fdfedb6ead19a8469
 The previous model (sha256 `f3ed3b73…`) is kept at
 `runs/bot/pressure-fresh-001/base-guard-969520.json`; to roll back, copy it over
 `base-guard.json` and restart the client.
-
-## Download
-
-Model files live under `runs/`, which git does not track. The new model (843 MB,
-174 MB compressed) is attached to the
-[`base-guard-2001520` release](https://github.com/boomaboom0818/Triplo/releases/tag/base-guard-2001520):
-
-```
-gh release download base-guard-2001520 -R boomaboom0818/Triplo -p 'base-guard-2001520.json.zst'
-zstd -d base-guard-2001520.json.zst -o runs/bot/pressure-fresh-001/base-guard.json
-```
-
-Compressed sha256 `38e620da3f7ff8a1f5e1768e39de285c893d8bf358dd39cc116675ea742bcfde`.

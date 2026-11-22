@@ -121,9 +121,8 @@ python scripts/openpoker_client.py --checkpoint runs/bot/pressure-fresh-001/base
 **`base-guard.json` is now the 2,001,520-iteration model** (2026-11-22), which replaced the
 969,520-iteration model after longer training improved it by +6.7 bb/100 [+1.1, +12.3] on a
 fresh confirmation seed (+10.1 on the development seed). The old model is kept as
-`base-guard-969520.json`. Download the model from the
-[`base-guard-2001520` release](https://github.com/boomaboom0818/Triplo/releases/tag/base-guard-2001520);
-see [Scale-001 results](docs/SCALE-001-RESULTS.md).
+`base-guard-969520.json`. Weights are not committed; see
+[Scale-001 results](docs/SCALE-001-RESULTS.md) to rebuild the model and for the results.
 
 **Late-Position Steals is built into `equity-guarded-v3` and `equity-guarded-v4` for history checkpoints.**
 The client automatically reads `runs/bot/late-position-folds.json` at startup.

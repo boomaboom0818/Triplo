@@ -9,3 +9,8 @@ runs/
 *.lock
 *.previous
 *.tmp
+
+# Model weights and training state: rebuild them from the code, never commit them.
+*.zst
+*.f64
+*.u64
