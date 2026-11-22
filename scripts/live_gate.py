@@ -44,7 +44,7 @@ def digest(path):
     return h.hexdigest()
 
 
-HERO_FALLBACKS=('equity-v1','equity-guarded-v1','equity-guarded-v1+stack-press','equity-guarded-v2','equity-guarded-v2+stack-press','equity-guarded-v3','equity-guarded-v3+stack-press')
+HERO_FALLBACKS=('equity-v1','equity-guarded-v1','equity-guarded-v1+stack-press','equity-guarded-v2','equity-guarded-v2+stack-press','equity-guarded-v3','equity-guarded-v3+stack-press','equity-guarded-v4','equity-guarded-v4+stack-press')
 
 
 def make_policy(saved, learned=True, fallback='equity-v1'):

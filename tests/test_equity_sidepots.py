@@ -178,13 +178,13 @@ def test_strength_table_percentiles():
 
 
 def test_fallback_registry_and_v1_untouched():
-    assert FALLBACKS == ('equity-v1', 'equity-guarded-v1', 'equity-guarded-v2', 'equity-guarded-v3')
+    assert FALLBACKS == ('equity-v1', 'equity-guarded-v1', 'equity-guarded-v2', 'equity-guarded-v3', 'equity-guarded-v4')
     assert type(make_fallback('equity-guarded-v1')) is GuardedEquityPolicy
     assert type(make_fallback('equity-v1')) is EquityPolicy
     v2 = make_fallback('equity-guarded-v2', stack_press=True)
     assert isinstance(v2, GuardedEquityPolicyV2) and v2.stack_press
     with pytest.raises(ValueError):
-        make_fallback('equity-guarded-v4')
+        make_fallback('equity-guarded-v99')
     assert not hasattr(GuardedEquityPolicy(), 'profiles')
 
 

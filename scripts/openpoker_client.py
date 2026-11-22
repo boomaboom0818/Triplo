@@ -13,7 +13,7 @@ from urllib.request import Request, urlopen
 
 from poker.cfr import CFRPolicy, information_key
 from poker.config import load_checkpoint
-from poker.equity_pricing import FALLBACKS, VERSION_V3, GuardedEquityPolicyV3, make_fallback
+from poker.equity_pricing import FALLBACKS, VERSION_V3, VERSION_V4, GuardedEquityPolicyV3, make_fallback
 from poker.fast_game import LEAN_MENU
 from poker.game import Observation
 from poker.late_position import LatePositionSteals
@@ -351,7 +351,7 @@ def main():
     parser.add_argument('--min-visits', type=int, default=64,
                         help='history model: minimum sampled average visits before using a learned row')
     parser.add_argument('--fallback', choices=('tight-v1', *FALLBACKS), default='tight-v1',
-                         help='rule fallback for history/lean policies; equity-guarded-v3 automatically '
+                         help='rule fallback for history/lean policies; equity-guarded-v3/-v4 automatically '
                               f'uses late-position evidence from {LATE_POSITION_EVIDENCE} for history checkpoints')
     parser.add_argument('--trace', type=Path, help='optional redacted public events and replay snapshots for diagnostics')
     parser.add_argument('--log', type=Path, help='append decisions and hand results as JSON lines')
@@ -359,7 +359,7 @@ def main():
                         help='Stack Press: with equity-guarded-v1, near-nut hands may raise up to the '
                              'whole stack (good vs weaker fields, risky vs strong tight ones)')
     parser.add_argument('--opponent-stats', type=Path,
-                        help='equity-guarded-v2: per-opponent postflop calling stats JSON (loaded, updated live, '
+                        help='equity-guarded-v2/-v3/-v4: per-opponent postflop calling stats JSON (loaded, updated live, '
                              'saved after each hand); enables value sizing for opponents with enough data')
     parser.add_argument('--opponent-min-faced', type=int, default=20,
                         help='faced postflop bets needed before an opponent gets a measured calling profile')
@@ -403,7 +403,7 @@ def main():
         policy.fallback = make_fallback(args.fallback, stack_press=args.stack_press)
         LOG.info('Fallback: %s (256 deterministic range samples), Stack Press %s',
                  args.fallback, 'ON' if args.stack_press else 'OFF')
-    if args.fallback == VERSION_V3 and isinstance(policy, history_cfr.HistoryPolicy):
+    if args.fallback in (VERSION_V3, VERSION_V4) and isinstance(policy, history_cfr.HistoryPolicy):
         try:
             evidence = LatePositionSteals.load(LATE_POSITION_EVIDENCE)
         except FileNotFoundError:
@@ -414,8 +414,8 @@ def main():
             policy.fallback.late_position_evidence = evidence
             LOG.info('Late-Position Steals: loaded %d saved lineups', len(evidence.evidence))
     if args.opponent_stats is not None:
-        if args.fallback not in ('equity-guarded-v2', VERSION_V3):
-            parser.error('--opponent-stats requires --fallback equity-guarded-v2 or -v3')
+        if args.fallback not in ('equity-guarded-v2', VERSION_V3, VERSION_V4):
+            parser.error('--opponent-stats requires --fallback equity-guarded-v2, -v3, or -v4')
         from poker.opponent_stats import OpponentStats
         policy.fallback.opponent_stats = OpponentStats.load(args.opponent_stats, min_faced=args.opponent_min_faced)
         stats = policy.fallback.opponent_stats

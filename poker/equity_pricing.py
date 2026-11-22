@@ -25,7 +25,7 @@ from itertools import combinations
 from math import sqrt
 from random import Random
 
-from .equity_policy import EquityPolicy, GuardedEquityPolicy, opponent_ranges, private_strength
+from .equity_policy import EquityPolicy, GuardedEquityPolicy, estimate_equity, opponent_ranges, private_strength
 from .fast_eval import CARD_ID, evaluate
 
 VERSION = 'equity-guarded-v2'
@@ -314,7 +314,85 @@ class GuardedEquityPolicyV3(GuardedEquityPolicyV2):
         return None
 
 
-FALLBACKS = ('equity-v1', 'equity-guarded-v1', VERSION, VERSION_V3)
+VERSION_V4 = 'equity-guarded-v4'
+
+
+def multiway_thresholds(opponents):
+    """Postflop betting thresholds scaled by fair-share equity 1 / (opponents + 1)."""
+    players = opponents + 1
+    return 1.0 / players, .68 * (2.0 / players) ** .5, .85 * (2.0 / players) ** .35
+
+
+class GuardedEquityPolicyV4(GuardedEquityPolicyV3):
+    """``equity-guarded-v3`` with fair-share multiway postflop betting thresholds.
+
+    Preflop and heads-up postflop decisions stay verbatim v3. In 3-to-6-player
+    postflop pots (``opponents >= 2``), v3's flat 0.40 / 0.60 / 0.85 betting
+    thresholds are scaled by fair-share equity ``1 / (opponents + 1)``, using
+    the smallest legal bet size (half-pot on the lean menu) when a newly
+    unlocked baseline bet has ``usable < 0.40`` before ``value_size`` runs.
+    All v3 ranges, side-pot pricing, opponent-aware value sizing, late-position
+    steal support, and poker safeguards stay intact.
+    """
+    VERSION = VERSION_V4
+
+    def _act_multiway(self, o):
+        self.last = None
+        equity, error = estimate_equity(o, self.samples, self.RANGE_MODEL)
+        opponents = sum(o.active) - 1
+        price = o.call / max(1, o.pot + o.call)
+        usable = equity * (1.0 if o.street == 3 else .90) - error
+        self.last = dict(equity=equity, standard_error=error, pot_odds=price, samples=self.samples)
+        raises = [a for a in o.legal if isinstance(a, int)]
+        hole = tuple(CARD_ID[c] for c in o.hole)
+        board = tuple(CARD_ID[c] for c in o.board)
+        strong, top_pair, _ = private_strength(hole, board)
+        board_plays = o.street == 3 and evaluate(hole + board) == evaluate(board)
+        reraised = any(h[2] > 0 and isinstance(h[3], int) and h[5] > 0 for h in o.history)
+        baseline = 'call'
+        press = self.stack_press and strong and usable >= self.STACK_PRESS_EQUITY
+        if board_plays or (not strong and (o.call or reraised)) or (o.call and reraised and usable < .80):
+            raises = []
+        elif raises and strong and o.call < o.pot:
+            baseline = raises[-1] if press else raises[min(2, len(raises) - 1)]
+        elif raises and top_pair and not o.call:
+            baseline = raises[min(1, len(raises) - 1)]
+        base_thresh, val_thresh, big_thresh = multiway_thresholds(opponents)
+        if isinstance(baseline, int) and usable >= base_thresh:
+            return raises[0] if usable < .40 and raises else baseline
+        if raises and usable >= val_thresh:
+            cap = max(2, o.call + 2 * o.pot)
+            if press:
+                cap = max(cap, o.stacks[o.position])
+            bounded = [a for a in raises if a <= cap]
+            if bounded:
+                return bounded[-1] if press or usable > big_thresh else bounded[0]
+        if not o.call:
+            return 'call'
+        if o.street == 3 and o.call > 200 and not strong:
+            return 'fold' if 'fold' in o.legal else 'call'
+        if usable >= price + (.025 if o.street == 3 else .05):
+            return 'call'
+        return 'fold' if 'fold' in o.legal else 'call'
+
+    def act(self, o):
+        if not o.street or sum(o.active) - 1 <= 1:
+            return super().act(o)
+        proposed = self._act_multiway(o)
+        self._draws = None
+        if isinstance(proposed, int):
+            return self.value_size(o, proposed)
+        if o.call and 'fold' in o.legal:
+            if o.street == 3 and o.call > 200 and not private_strength(
+                    tuple(CARD_ID[c] for c in o.hole), tuple(CARD_ID[c] for c in o.board))[0]:
+                return proposed
+            priced = self.price_call(o)
+            if priced is not None:
+                return priced
+        return proposed
+
+
+FALLBACKS = ('equity-v1', 'equity-guarded-v1', VERSION, VERSION_V3, VERSION_V4)
 
 
 def make_fallback(name, stack_press=False, **options):
@@ -327,4 +405,6 @@ def make_fallback(name, stack_press=False, **options):
         return GuardedEquityPolicyV2(stack_press=stack_press, **options)
     if name == VERSION_V3:
         return GuardedEquityPolicyV3(stack_press=stack_press, **options)
+    if name == VERSION_V4:
+        return GuardedEquityPolicyV4(stack_press=stack_press, **options)
     raise ValueError('unknown equity fallback: %s' % name)

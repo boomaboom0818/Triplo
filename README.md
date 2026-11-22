@@ -111,20 +111,21 @@ zero-sum equilibrium guarantees. No heads-up metric establishes multiplayer stre
 
 ## Deployment setups
 
-**Frontier setup: Guarded + `equity-guarded-v3`.** This is what runs live on OpenPoker:
+**Frontier setup: Guarded + `equity-guarded-v4`.** This is what runs live on OpenPoker:
 
 ```
 python scripts/openpoker_client.py --checkpoint runs/bot/pressure-fresh-001/base-guard.json \
-  --min-visits 64 --fallback equity-guarded-v3 --opponent-stats runs/bot/opponent-stats.json
+  --min-visits 64 --fallback equity-guarded-v4 --opponent-stats runs/bot/opponent-stats.json
 ```
 
-**Late-Position Steals is built into `equity-guarded-v3` for history checkpoints.**
+**Late-Position Steals is built into `equity-guarded-v3` and `equity-guarded-v4` for history checkpoints.**
 The client automatically reads `runs/bot/late-position-folds.json` at startup.
 It can turn a fold into a 2.5 BB open from the cutoff, button, or small blind
 only with qualifying fold evidence for the exact remaining lineup. If the file
 is absent or no lineup qualifies, the original action stands. The initial data
 check found no qualifying lineups and did not establish live profitability. See
-the [OpenPoker client setup](docs/openpoker.md) and the
+the [OpenPoker client setup](docs/openpoker.md),
+[Triplo v4](docs/TRIPLO-V4.md), and the
 [Late-Position Steals fitting guide](docs/LATE-POSITION-STEALS.md).
 
 A deployment is three independent choices: the **model** (`--checkpoint`), an optional
@@ -139,7 +140,8 @@ opt-in switch on the guarded fallback. The table client takes them as
 | **Classic + guarded fallback** | same | `equity-guarded-v1` | Same as Classic with the one-pair and JJ/QQ disasters removed. | Statistically no different from Classic in simulation (0.0 bb/100); the model plays most hands. |
 | **Guarded** (previous default) | `runs/bot/pressure-fresh-001/base-guard.json` (stage-10 model + PressureGuard v1) | `equity-guarded-v1` | Mixed, tight and aggressive fields, and short or medium stacks. Best simulated average (58.2 bb/100, +11 over Classic) and +38 to +45 bb/100 against tight/aggressive 100 BB tables. | Fell from +32 to about -19 bb/100 against copies of the Classic model. That gap is not statistically significant but appeared in every guarded setup. |
 | **Guarded with PressureGuard v2** | `runs/bot/pressure-fresh-001/stage-10-pressure-guard-v2.json` or `history-sustained-001-pressure-guard-v2.json` | `equity-guarded-v1` | Same niche as Guarded; v2 adds the JJ/QQ 100 BB cap, river-overbet fold and reraise limit inside the guard. Statistically tied with Guarded. | Not in the full nine-table screen for the stage-10 model. |
-| **Guarded + `equity-guarded-v3`** (frontier, recommended default) | `runs/bot/pressure-fresh-001/base-guard.json` | `equity-guarded-v3` + `--opponent-stats runs/bot/opponent-stats.json` | Every field. All of v2's rules, with opponent ranges calibrated on 5,447 real OpenPoker showdown hands (`poker/range_calibration.py`): one multiplier per hand class for each postflop line (bet/raise, call, check). Predicts real holdings better than v2's hand-set weights on held-out hands (log-loss 1.127 vs 1.233). | Mostly calls more often with pairs and draws against bets, and value-raises more. On replayed live hands its scorable changes were positive (folds +265 ± 308 BB, revealed-card calls +612 ± 1,039 BB) but too few to be conclusive; confirm with live results. |
+| **Guarded + `equity-guarded-v4`** (frontier, recommended default) | `runs/bot/pressure-fresh-001/base-guard.json` | `equity-guarded-v4` + `--opponent-stats runs/bot/opponent-stats.json` | Every field. Keeps every preflop and heads-up `v3` decision verbatim, and scales multiway postflop betting thresholds by fair-share equity `1 / (opponents + 1)` (using half-pot when newly unlocked below 0.40 usable equity). Untouched 16-scenario holdout (~132,000 hands): +6.21 ± 2.79 BB/100 aggregate, 3 significant wins, 0/16 significant regressions (`docs/TRIPLO-V4.md`). | Multiway simulation gains are strongest against loose/passive fields; confirm long-run live results and roll back to `--fallback equity-guarded-v3` if needed. |
+| **Guarded + `equity-guarded-v3`** (previous frontier) | `runs/bot/pressure-fresh-001/base-guard.json` | `equity-guarded-v3` + `--opponent-stats runs/bot/opponent-stats.json` | Every field. All of v2's rules, with opponent ranges calibrated on 5,447 real OpenPoker showdown hands (`poker/range_calibration.py`): one multiplier per hand class for each postflop line (bet/raise, call, check). Predicts real holdings better than v2's hand-set weights on held-out hands (log-loss 1.127 vs 1.233). | Uses a flat 0.40 multiway postflop threshold that under-bets top pair and strong favorites in 3–6 player pots. |
 | **Guarded + `equity-guarded-v2`** (previous default) | `runs/bot/pressure-fresh-001/base-guard.json` | `equity-guarded-v2` + `--opponent-stats runs/bot/opponent-stats.json` | Every field. Keeps all of Guarded, and adds call pricing that splits main and side pots by who can win each, plus bet sizing from each opponent's measured postflop calling stats. Sizing adapts to a player only after they have faced 20 postflop bets; until then it keeps v1's size. | Against five copies of Guarded in duplicate play it was even (about +0.2 ± 0.5 bb/100, no table type worse, `runs/bot/h2h-002`); its edge is expected against sticky callers, which simulation cannot supply, so confirm it with live results. Needs `--opponent-stats`, or bet sizing stays at v1's. |
 | **Any of the above + Stack Press** | any | `equity-guarded-v1` + `--stack-press` | Weak or loose fields (calling stations, over-callers) and deep stacks. In duplicate self-play it added +47 bb/100 at 100 BB and +117 bb/100 at 200 BB against rule bots. | Strictly more risk when you are beaten. No gain against an equal-strength field (0.0 bb/100) and untested against strong bots. Turn it off in tight, competitive games. |
 
@@ -153,10 +155,10 @@ showdowns with `scripts.range_sim_lines` and `scripts.range_fit`; `scripts.range
 compares real holdings by line with the model. `scripts.h2h_live` replays the same deals
 with a candidate in one seat against the deployed setup.
 
-Choosing quickly: by default run the **frontier** setup (Guarded + `equity-guarded-v3`
+Choosing quickly: by default run the **frontier** setup (Guarded + `equity-guarded-v4`
 with `--opponent-stats`) without Stack Press; clearly soft table, add `--stack-press`;
-to roll back the range calibration, switch `--fallback` to `equity-guarded-v2`, or to
-`equity-guarded-v1` (**Guarded**) for the original fallback;
+to roll back multiway fair-share scaling, switch `--fallback` to `equity-guarded-v3`,
+or to `equity-guarded-v2` / `equity-guarded-v1` (**Guarded**) for earlier fallbacks;
 strong-bot table or if Guarded loses to trained-bot opponents, fall back to **Classic**. `--stack-press` only works with
 an `equity-guarded` fallback; the client logs `Stack Press ON` or `OFF` at startup.
 
