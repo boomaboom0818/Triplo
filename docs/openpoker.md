@@ -48,6 +48,52 @@ the final snapshot. See [the river/history report](RIVER-003.md) for limitations
 and a short diagnostic command. Bounded river checkpoints are local-only and are
 not accepted by the live client.
 
+## Leaving tables when strong opponents sit down (opt-in)
+
+Ported from Triplo Turbo's "apex shark" rule. Off by default; OpenPoker only.
+
+```bash
+# Log what it would do, without leaving:
+.venv/bin/python -m scripts.openpoker_client --checkpoint ... --log runs/bot/x/session.jsonl \
+    --avoid-strong report --strong-bb100 300
+# Actually leave and requeue:
+.venv/bin/python -m scripts.openpoker_client --checkpoint ... --avoid-strong leave --strong-bb100 300
+```
+
+An opponent is **strong** when their public season result, shrunk toward zero
+with a 500-hand prior, is at least `--strong-bb100` (default 220, Turbo's apex
+bar; requires 200+ hands). An opponent is **weak** when they are a `no_code`
+preset or at most −15 BB/100. The client stays while weak seats are at least as
+many as strong ones, and leaves otherwise. Unrated players and bots on your own
+account count as neither.
+
+The lineup is checked when the bot is seated, when a player joins, and after each
+hand. A leave sent when a player joins mid-hand is held by the server until that
+hand ends. After a leave the client waits 10 s before rejoining the lobby, so it
+is less likely to be seated back at the same table.
+
+Safeguards:
+- It acts only on a leaderboard read from the last 60 s, fetched in the
+  background every 30 s, never on the decision path.
+- It leaves only when your stack covers `--buy-in`. Leaving cashes out the whole
+  stack, and the bot rejoins at `--buy-in`.
+- After a leave it waits 30 s before leaving again, doubling with each
+  consecutive leave up to 10 min. Four hands at one table reset that backoff.
+
+Each check that finds a strong opponent is logged as `strong_opponent_check`, with
+`leave_requested` showing whether a leave was sent.
+
+Evidence so far (2026-11-23) is suggestive, not significant. On 12,661 live
+Triplo hands from 9 tables, hands that the 300 bar would have left won −81
+BB/100 (95% interval −261 to +87), while the rest won +124. Opponents were rated
+with the later leaderboard, which favors the rule, and live results came mostly
+from earlier models. Run `report` first. Switch to `leave` only if flagged hands
+stay clearly below unflagged hands across at least 20 tables.
+
+Turbo's other table rules (its table-profitability score and leaving with a big
+stack when a deep shark sits down) were evaluated and not ported. On the same
+hands, the tables they would have left were profitable.
+
 ## Live replay repair and equity fallback (2026-11-16)
 
 Captured live traffic showed that a `player_action` closing a round can carry the

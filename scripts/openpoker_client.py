@@ -214,6 +214,23 @@ def redact(value):
 
 
 async def run(args, policy, key):
+    avoider = None
+    tasks = {}  # 'requeue': a delayed lobby rejoin after an --avoid-strong leave
+    mode = getattr(args, 'avoid_strong', 'off')
+    if mode != 'off':
+        from scripts.openpoker_strong import STRONG_BB100, StrongAvoider
+        threshold = getattr(args, 'strong_bb100', None)
+        avoider = StrongAvoider(mode, STRONG_BB100 if threshold is None else threshold)
+    try:
+        await _run(args, policy, key, avoider, tasks)
+    finally:
+        if tasks.get('requeue'):
+            tasks['requeue'].cancel()
+        if avoider:
+            avoider.clear_field()
+
+
+async def _run(args, policy, key, avoider, tasks):
     from websockets.asyncio.client import connect
     from websockets.exceptions import ConnectionClosed
     delay = 1
@@ -239,8 +256,35 @@ async def run(args, policy, key):
                     'Authorization': 'Bearer ' + key}, open_timeout=20) as ws:
                 async def send(message):
                     await ws.send(json.dumps(message))
+                joining = retry_leave = False
                 async def join():
+                    nonlocal joining, retry_leave
+                    if avoider:
+                        retry_leave = False
+                        avoider.seated(None)
+                        avoider.leaving = None
+                        if joining:
+                            return
+                        joining = True
                     await send(dict(type='join_lobby', buy_in=args.buy_in))
+                async def join_later(seconds):
+                    await asyncio.sleep(seconds)
+                    await join()
+                def cancel_requeue():
+                    if tasks.get('requeue'):
+                        tasks.pop('requeue').cancel()
+                async def check_strong(trigger):
+                    """Log strong opponents at the table and, in leave mode, ask to leave."""
+                    found = avoider.check(trigger, args.buy_in)
+                    if found is None:
+                        return
+                    move = found['leave'] and avoider.mode == 'leave'
+                    record(log, type='strong_opponent_check', leave_requested=move, **found)
+                    LOG.info('Strong opponents %s at table: %s (%s)', ', '.join(found['strong']),
+                             found['reason'], avoider.mode)
+                    if move:
+                        avoider.left_table()
+                        await send(dict(type='leave_table'))
                 async for raw in ws:
                     msg = json.loads(raw)
                     kind = msg.get('type')
@@ -259,6 +303,17 @@ async def run(args, policy, key):
                         stats.ingest(msg)
                     if kind == 'connected':
                         game = await asyncio.to_thread(active_game, key)
+                        if avoider:
+                            avoider.hero = msg.get('name')
+                            avoider.seated(game.get('table_id'))
+                            avoider.hero_seat = game.get('seat')
+                            # Reconcile an interrupted leave. If still seated, keep
+                            # serving turns; retry only at the next hand boundary.
+                            retry_leave = bool(avoider.leaving and avoider.leaving == avoider.table_id)
+                            if not retry_leave:
+                                avoider.leaving = None
+                            avoider.clear_field()
+                            avoider.refresh()
                         if game.get('playing'):
                             await send(resync_request(game['table_id']))
                         else:
@@ -270,6 +325,8 @@ async def run(args, policy, key):
                         await send(resync_request(msg['table_id']))
                     elif kind == 'resync_response':
                         snapshot = msg['snapshot']
+                        if avoider:
+                            avoider.snapshot(snapshot)
                         public_history, complete = history.resync(msg)
                         history.ingest(msg)
                         hero = snapshot.get('hero', {})
@@ -296,13 +353,31 @@ async def run(args, policy, key):
                                next_season_number=msg.get('next_season_number'))
                         return
                     elif kind in ('table_closed', 'season_ended', 'rebuy_confirmed'):
+                        if avoider:
+                            if (kind == 'table_closed' and avoider.table_id
+                                    and msg.get('table_id', avoider.table_id) != avoider.table_id):
+                                continue
+                            if kind != 'table_closed':
+                                joining = False
+                            if kind == 'season_ended':
+                                avoider.clear_field()
                         pending.clear()
                         sent_at.clear()
                         rejected.clear()
                         await join()
                     elif kind == 'table_joined':
+                        if avoider:
+                            joining = False
+                            cancel_requeue()
+                            avoider.seated(msg.get('table_id'))
+                            avoider.hero_seat = msg.get('seat')
+                            avoider.leaving = None
+                            avoider.arrived(msg)
                         seat = msg.get('seat', seat)
                         record(log, type='table_joined', table_id=msg.get('table_id'), seat=seat, players=len(msg.get('players', [])))
+                        if avoider:
+                            avoider.refresh()
+                            await check_strong('table_joined')
                     elif kind == 'hand_result':
                         pending.clear()
                         sent_at.clear()
@@ -315,7 +390,43 @@ async def run(args, policy, key):
                             LOG.info('Session time limit reached between hands')
                             await send(dict(type='leave_table'))
                             return
+                        if avoider:
+                            if avoider.leaving and retry_leave and msg.get('table_id') == avoider.leaving:
+                                retry_leave = False
+                                await send(dict(type='leave_table'))
+                                continue
+                            avoider.refresh()
+                            if avoider.counted(msg):
+                                await check_strong('hand_result')
+                    elif avoider and kind == 'table_state':
+                        avoider.snapshot(msg)
+                    elif avoider and kind in ('player_left', 'player_joined'):
+                        if msg.get('table_id', avoider.table_id) == avoider.table_id:
+                            if (kind == 'player_left' and avoider.leaving and msg.get('seat') == avoider.hero_seat
+                                    and msg.get('name') == avoider.hero):
+                                # Give the seat time to refill so the lobby seats us elsewhere.
+                                from scripts import openpoker_strong
+                                if openpoker_strong.REQUEUE_DELAY > 0:
+                                    if not tasks.get('requeue') or tasks['requeue'].done():
+                                        tasks['requeue'] = asyncio.create_task(join_later(openpoker_strong.REQUEUE_DELAY))
+                                else:
+                                    await join()
+                            elif kind == 'player_left':
+                                avoider.left(msg)
+                            else:
+                                avoider.joined(msg)
+                                # A new arrival plays from the next hand; the server
+                                # holds a mid-hand leave until this hand ends.
+                                await check_strong('player_joined')
+                    elif avoider and kind == 'error' and msg.get('code') == 'leave_pending':
+                        LOG.info('Leave queued until the current hand ends')
+                    elif (avoider and avoider.leaving and kind in ('error', 'action_rejected')
+                          and msg.get('code') == 'not_at_table'):
+                        await join()
                     elif kind == 'error' and msg.get('code') == 'already_seated':
+                        if avoider:
+                            joining = False
+                            avoider.seated(msg['table_id'])
                         await send(resync_request(msg['table_id']))
                     elif kind in ('error', 'action_rejected'):
                         code = msg.get('code', 'unknown')
@@ -334,6 +445,8 @@ async def run(args, policy, key):
                         return
         except (OSError, ConnectionClosed, TimeoutError) as exc:
             details = dict(error=type(exc).__name__, reason=str(exc), retry_seconds=delay)
+            if tasks.get('requeue'):
+                tasks.pop('requeue').cancel()  # never fire a stale rejoin on the next socket
             record(log, type='connection_lost', **details)
             LOG.warning('Connection lost (%s: %s); retrying in %ss', type(exc).__name__, exc, delay)
             await asyncio.sleep(delay)
@@ -355,6 +468,11 @@ def main():
                               f'uses late-position evidence from {LATE_POSITION_EVIDENCE} for history checkpoints')
     parser.add_argument('--trace', type=Path, help='optional redacted public events and replay snapshots for diagnostics')
     parser.add_argument('--log', type=Path, help='append decisions and hand results as JSON lines')
+    parser.add_argument('--avoid-strong', choices=('off', 'report', 'leave'), default='off',
+                        help='leave the table when strong opponents sit down (OpenPoker only, from Triplo Turbo); '
+                             'report logs what it would do, leave also leaves and requeues')
+    parser.add_argument('--strong-bb100', type=float, default=None, metavar='BB100',
+                        help='season BB/100 (prior-shrunk) at which an opponent counts as strong (default: 220)')
     parser.add_argument('--stack-press', action=argparse.BooleanOptionalAction, default=False,
                         help='Stack Press: with equity-guarded-v1, near-nut hands may raise up to the '
                              'whole stack (good vs weaker fields, risky vs strong tight ones)')
@@ -367,6 +485,8 @@ def main():
     parser.add_argument('--stop-on-season-end', action='store_true',
                         help='exit when the current season ends instead of joining the next one')
     args = parser.parse_args()
+    if args.strong_bb100 is not None and args.avoid_strong == 'off':
+        parser.error('--strong-bb100 requires --avoid-strong report or leave')
     if json.loads(args.checkpoint.read_text()).get('algorithm') in history_cfr.ALGORITHMS:
         saved = history_cfr.load(args.checkpoint)
     else:
