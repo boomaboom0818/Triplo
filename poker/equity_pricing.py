@@ -336,6 +336,127 @@ class GuardedEquityPolicyV4(GuardedEquityPolicyV3):
     """
     VERSION = VERSION_V4
 
+    def __init__(self, samples=256, stack_press=False, profiles=None, deep_value=False):
+        super().__init__(samples, stack_press, profiles)
+        self.deep_value = deep_value
+
+    def _act_deep_value(self, o):
+        self._draws = None
+        self.last = None
+        opponents = sum(o.active) - 1
+        equity, error = estimate_equity(o, self.samples, self.RANGE_MODEL)
+        price = o.call / max(1, o.pot + o.call)
+        usable = equity * (1.0 if o.street == 3 else .90) - error
+        self.last = dict(equity=equity, standard_error=error, pot_odds=price, samples=self.samples)
+        raises = [a for a in o.legal if isinstance(a, int)]
+        hole = tuple(CARD_ID[c] for c in o.hole)
+        board = tuple(CARD_ID[c] for c in o.board)
+        strong, top_pair, _ = private_strength(hole, board)
+        board_plays = o.street == 3 and evaluate(hole + board) == evaluate(board)
+        reraised = any(h[2] > 0 and isinstance(h[3], int) and h[5] > 0 for h in o.history)
+        base_thresh, val_thresh, big_thresh = (
+            multiway_thresholds(opponents) if opponents >= 2 else (.50, .68, .85))
+        acting = [i for i, a in enumerate(o.active) if a and i != o.position and o.stacks[i] > 0]
+        all_sticky = (bool(acting)
+                      and all((i in self.profiles or None in self.profiles) and self.threshold(i)[0] <= .18
+                              for i in acting))
+        press = ((self.stack_press and strong and usable >= self.STACK_PRESS_EQUITY)
+                 or (strong and usable >= (.72 if all_sticky else .78)))
+        allow_tp_raise = (top_pair and not reraised and o.call > 0 and o.call <= o.pot
+                          and usable >= (.68 if all_sticky else .76))
+        baseline = 'call'
+        if board_plays or (not strong and not allow_tp_raise and (o.call or reraised)) or (o.call and reraised and usable < .80):
+            raises = []
+        elif raises and strong and (o.call < o.pot or usable >= .78):
+            baseline = raises[-1] if press else raises[min(2, len(raises) - 1)]
+        elif raises and top_pair and (not o.call or allow_tp_raise):
+            baseline = raises[min(1, len(raises) - 1)]
+        proposed = None
+        if isinstance(baseline, int) and usable >= base_thresh:
+            proposed = raises[0] if opponents >= 2 and usable < .40 and raises else baseline
+        elif raises and usable >= val_thresh:
+            cap = max(2, o.call + 2 * o.pot)
+            if press:
+                cap = max(cap, o.stacks[o.position])
+            bounded = [a for a in raises if a <= cap]
+            if bounded:
+                proposed = bounded[-1] if press or usable > big_thresh else bounded[0]
+        if proposed is None:
+            if not o.call:
+                proposed = 'call'
+            elif o.street == 3 and o.call > 200 and not strong:
+                proposed = 'fold' if 'fold' in o.legal else 'call'
+            elif usable >= price + (.025 if o.street == 3 else .05):
+                proposed = 'call'
+            else:
+                proposed = 'fold' if 'fold' in o.legal else 'call'
+        if isinstance(proposed, int):
+            return self._deep_value_size(o, proposed, press, all_sticky, strong, usable)
+        if o.call and 'fold' in o.legal:
+            if o.street == 3 and o.call > 200 and not strong:
+                return proposed
+            priced = self.price_call(o)
+            if priced is not None:
+                return priced
+        return proposed
+
+    def _deep_value_size(self, o, proposed, press, all_sticky, strong, usable):
+        hero = o.position
+        raises = [a for a in o.legal if isinstance(a, int)]
+        if press or (strong and all_sticky and usable >= .68):
+            bound = max(proposed, o.stacks[hero] + o.pot + o.call)
+        elif all_sticky and usable >= .60:
+            bound = max(proposed, max(2, o.call + 3 * o.pot))
+        else:
+            bound = max(proposed, max(2, o.call + 2 * o.pot))
+        sizes = [a for a in raises if a <= bound]
+        if len(sizes) < 2 or proposed not in sizes:
+            return proposed
+        all_in = [i for i, a in enumerate(o.active) if a and i != hero and o.stacks[i] == 0]
+        if not o.call and not all_in:
+            paid, bets, dead = [0] * len(o.stacks), [0] * len(o.stacks), o.pot
+        else:
+            book = ledger(o)
+            if book is None:
+                return proposed
+            (paid, bets), dead = book, 0
+        acting = [i for i, a in enumerate(o.active) if a and i != hero and o.stacks[i] > 0]
+        if not acting or not all(i in self.profiles or None in self.profiles for i in acting):
+            return proposed
+        opponents, draws = self.draws(o)
+        index = {pos: j for j, pos in enumerate(opponents)}
+        values = {}
+        for size in sizes:
+            invest = size - bets[hero]
+            owed = {i: min(o.stacks[i], max(0, size - bets[i])) for i in acting}
+            limits = {}
+            for i in acting:
+                base, slope = self.threshold(i)
+                limits[i] = base + slope * owed[i] / max(1, o.pot + invest + owed[i])
+            cache, total = {}, 0.0
+            for h, scores, strength in draws:
+                callers = tuple(i for i in acting if strength[index[i]] >= limits[i])
+                layers = cache.get(callers)
+                if layers is None:
+                    final = list(paid)
+                    final[hero] += invest
+                    for i in callers:
+                        final[i] += owed[i]
+                    in_hand = [i == hero or i in callers or i in all_in for i in range(len(final))]
+                    layers = cache[callers] = [
+                        (amount, [index[p] for p in eligible if p != hero])
+                        for amount, eligible in pot_layers(final, in_hand, [True] * len(final), dead)
+                        if hero in eligible]
+                total += sum(share(h, scores, subset) * amount for amount, subset in layers) - invest
+            values[size] = total / len(draws)
+        best = max(sizes, key=lambda s: (values[s], -s))
+        chosen = best if values[best] - values[proposed] > SIZE_EPSILON * o.pot else proposed
+        if self.last is not None:
+            self.last = dict(self.last, version=self.VERSION, deep_value=True,
+                             size_ev={str(s): v for s, v in values.items()},
+                             v1_size=proposed, chosen_size=chosen)
+        return chosen
+
     def _act_multiway(self, o):
         self.last = None
         equity, error = estimate_equity(o, self.samples, self.RANGE_MODEL)
@@ -376,6 +497,8 @@ class GuardedEquityPolicyV4(GuardedEquityPolicyV3):
         return 'fold' if 'fold' in o.legal else 'call'
 
     def act(self, o):
+        if o.street and self.deep_value:
+            return self._act_deep_value(o)
         if not o.street or sum(o.active) - 1 <= 1:
             return super().act(o)
         proposed = self._act_multiway(o)
