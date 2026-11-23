@@ -33,8 +33,9 @@ def fetch_field():
 
 
 class StrongAvoider:
-    def __init__(self, mode='report', threshold=STRONG_BB100):
+    def __init__(self, mode='report', threshold=STRONG_BB100, min_weak=0, max_strong=None):
         self.mode, self.threshold = mode, threshold
+        self.min_weak, self.max_strong = min_weak, max_strong
         self.leaves = 0
         self.last_leave = float('-inf')
         self.task = self.field = None
@@ -127,8 +128,9 @@ class StrongAvoider:
         if not self.field or now - self.field_time > MAX_AGE_SECONDS:
             return None
         opponents = [n for s, n in self.live.items() if s != self.hero_seat and n != self.hero]
-        found = self.field.strong_check(self.hero, opponents, self.threshold)
-        if not found.strong:
+        found = self.field.strong_check(self.hero, opponents, self.threshold,
+                                        min_weak=self.min_weak, max_strong=self.max_strong)
+        if not found.strong and not found.leave:
             return None
         detail = dict(table_id=self.table_id, trigger=trigger, threshold_bb100=self.threshold,
                       strong=list(found.strong), weak=list(found.weak), opponents=opponents,

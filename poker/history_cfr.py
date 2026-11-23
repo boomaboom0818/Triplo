@@ -404,7 +404,7 @@ class HistoryPolicy:
     menu = LEAN_MENU
     key = staticmethod(observation_key)
 
-    def __init__(self, saved, seed=0, min_visits=64, learned=True):
+    def __init__(self, saved, seed=0, min_visits=64, learned=True, learned_postflop=True):
         if type(min_visits) is not int or min_visits < 1:
             raise ValueError('positive integer minimum visits required')
         self.sums, self.visits = saved['sums'], saved['visits']
@@ -413,6 +413,7 @@ class HistoryPolicy:
         self.key = compact_observation_key if self.abstraction == COMPACT_VERSION else observation_key
         self.rng = Random(seed)
         self.min_visits, self.learned = min_visits, learned
+        self.learned_postflop = learned_postflop
         self.fallback = RulePolicy('tight-v1')
         self.decisions = self.covered = self.safeguards = self.thin = 0
         self.pressure_guard = None
@@ -445,7 +446,7 @@ class HistoryPolicy:
             history_present = history_complete
         key = self.key(o)
         row = self.sums.get(key)
-        if self.learned and history_present and row and len(row) == len(o.legal) and sum(row) > 0:
+        if self.learned and (self.learned_postflop or not o.street) and history_present and row and len(row) == len(o.legal) and sum(row) > 0:
             if self.visits.get(key, 0) >= self.min_visits:
                 action = self.rng.choices(o.legal, row)[0]
                 # Folding a free check is dominated.

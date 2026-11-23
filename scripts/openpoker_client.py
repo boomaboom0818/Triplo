@@ -73,13 +73,14 @@ def decision(snapshot, policy, public_history=(), history_complete=None):
                 sizes[unit(shove)] = shove
         for n, amount in sorted(sizes.items()):
             legal.append(n); wire[n] = {'action': 'raise', 'amount': amount}
-        # Stack Press sizes stay off the trained menu (and so off the learned
-        # key); poker.stack_press offers them to the fallback only.
-        if stack_press.enabled(policy):
+        # Stack Press / Deep Value sizes stay off the trained menu (and so off the
+        # learned key); poker.stack_press offers them to the fallback only.
+        if stack_press.deep_enabled(policy) or stack_press.enabled(policy):
             me = seats[position]
             opponents = [(unit(s['bet']), unit(s['stack'])) for s in seats if s is not me and not s['folded']]
-            for n in stack_press.sizes(len(snapshot['board']), bet, pot, unit(lo), unit(hi), unit(me['bet']),
-                                       unit(me['stack']), opponents, legal):
+            sizer = stack_press.deep_sizes if stack_press.deep_enabled(policy) else stack_press.sizes
+            for n in sizer(len(snapshot['board']), bet, pot, unit(lo), unit(hi), unit(me['bet']),
+                           unit(me['stack']), opponents, legal):
                 amount = min(hi, max(lo, round(n * scale)))
                 if unit(amount) not in wire:
                     press.append(unit(amount)); wire[unit(amount)] = {'action': 'raise', 'amount': amount}
@@ -246,7 +247,9 @@ async def run(args, policy, key):
     if mode != 'off':
         from scripts.openpoker_strong import STRONG_BB100, StrongAvoider
         threshold = getattr(args, 'strong_bb100', None)
-        avoider = StrongAvoider(mode, STRONG_BB100 if threshold is None else threshold)
+        avoider = StrongAvoider(mode, STRONG_BB100 if threshold is None else threshold,
+                                min_weak=getattr(args, 'min_weak', 0),
+                                max_strong=getattr(args, 'max_strong', None))
     try:
         await _run(args, policy, key, avoider, tasks)
     finally:
@@ -306,8 +309,8 @@ async def _run(args, policy, key, avoider, tasks):
                         return
                     move = found['leave'] and avoider.mode == 'leave'
                     record(log, type='strong_opponent_check', leave_requested=move, **found)
-                    LOG.info('Strong opponents %s at table: %s (%s)', ', '.join(found['strong']),
-                             found['reason'], avoider.mode)
+                    LOG.info('Table check (%s): strong=[%s] weak=%d (%s)', found['reason'],
+                             ', '.join(found['strong']), len(found['weak']), avoider.mode)
                     if move:
                         avoider.left_table()
                         await send(dict(type='leave_table'))
@@ -503,11 +506,19 @@ def main():
                              'report logs what it would do, leave also leaves and requeues')
     parser.add_argument('--strong-bb100', type=float, default=None, metavar='BB100',
                         help='season BB/100 (prior-shrunk) at which an opponent counts as strong (default: 220)')
+    parser.add_argument('--min-weak', type=int, default=0, metavar='N',
+                        help='with --avoid-strong: leave full tables (4+ opponents) with fewer than N weak seats')
+    parser.add_argument('--max-strong', type=int, default=None, metavar='N',
+                        help='with --avoid-strong: always leave when more than N strong opponents are seated')
     parser.add_argument('--idle-timeout', type=float, default=0., metavar='SECONDS',
                         help='reconnect if the server sends nothing for this long (default 0: never)')
     parser.add_argument('--stack-press', action=argparse.BooleanOptionalAction, default=False,
                         help='Stack Press: with equity-guarded-v1, near-nut hands may raise up to the '
                              'whole stack (good vs weaker fields, risky vs strong tight ones)')
+    parser.add_argument('--deep-value', action=argparse.BooleanOptionalAction, default=False,
+                        help='v5-fast: expanded postflop value sizing menu at all depths and sticky top-pair value raises')
+    parser.add_argument('--no-learned-postflop', action='store_true',
+                        help='v5-fast: use the learned CFR checkpoint preflop only and route all postflop spots to the fallback')
     parser.add_argument('--river-solver', action=argparse.BooleanOptionalAction, default=None,
                         help='heads-up river solver (v5 default at a 1000-chip buy-in, opt-in at deeper buy-ins)')
     parser.add_argument('--opponent-stats', type=Path,
@@ -529,6 +540,16 @@ def main():
         parser.error('--idle-timeout must be 0 (off) or positive seconds')
     if args.strong_bb100 is not None and args.avoid_strong == 'off':
         parser.error('--strong-bb100 requires --avoid-strong report or leave')
+    if args.min_weak < 0:
+        parser.error('--min-weak must be non-negative')
+    if args.min_weak and args.avoid_strong == 'off':
+        parser.error('--min-weak requires --avoid-strong report or leave')
+    if args.max_strong is not None and args.max_strong < 0:
+        parser.error('--max-strong must be non-negative')
+    if args.max_strong is not None and args.avoid_strong == 'off':
+        parser.error('--max-strong requires --avoid-strong report or leave')
+    if args.deep_value and args.fallback not in (VERSION_V4, VERSION_V5):
+        parser.error(f'--deep-value requires --fallback {VERSION_V4} or {VERSION_V5}')
     if json.loads(args.checkpoint.read_text()).get('algorithm') in history_cfr.ALGORITHMS:
         saved = history_cfr.load(args.checkpoint)
     else:
@@ -546,16 +567,22 @@ def main():
     if saved['abstraction'] in history_cfr.VERSIONS:
         if args.min_support != 0:
             parser.error('--min-support requires a lean checkpoint')
-        policy = history_cfr.HistoryPolicy(saved, args.seed, args.min_visits)
-        LOG.info('History model: learned rows require verified replay and min_visits=%s', args.min_visits)
+        policy = history_cfr.HistoryPolicy(saved, args.seed, args.min_visits,
+                                           learned_postflop=not args.no_learned_postflop)
+        LOG.info('History model: learned rows require verified replay and min_visits=%s (learned_postflop=%s)',
+                 args.min_visits, 'OFF' if args.no_learned_postflop else 'ON')
         if policy.pressure_guard is not None:
             LOG.info('Decision guard: %s', policy.pressure_guard.version)
     elif saved['abstraction'] == lean_cfr.VERSION:
+        if args.no_learned_postflop:
+            parser.error('--no-learned-postflop requires a history checkpoint')
         policy = lean_cfr.LeanPolicy.from_checkpoint(saved, args.seed, args.min_support)
         LOG.info('Sparse-row fallback min_support=%s', args.min_support)
     else:
         if args.min_support != 0:
             parser.error('--min-support requires a lean checkpoint')
+        if args.no_learned_postflop:
+            parser.error('--no-learned-postflop requires a history checkpoint')
         policy = CFRPolicy(saved['sums'], args.seed, saved['abstraction'])
     if args.fallback in FALLBACKS:
         if (args.fallback == VERSION_V5 or args.river_solver) and not isinstance(policy, history_cfr.HistoryPolicy):
@@ -567,15 +594,20 @@ def main():
         try:
             if args.fallback == VERSION_V5 or args.river_solver:
                 policy.fallback = make_fallback(VERSION_V5, stack_press=args.stack_press,
-                                                solve_river=args.river_solver)
+                                                solve_river=args.river_solver,
+                                                deep_value=args.deep_value)
+            elif args.fallback == VERSION_V4:
+                policy.fallback = make_fallback(VERSION_V4, stack_press=args.stack_press,
+                                                deep_value=args.deep_value)
             else:
                 policy.fallback = make_fallback(args.fallback, stack_press=args.stack_press)
         except ModuleNotFoundError as exc:
             if exc.name != 'numpy':
                 raise
             parser.error('--river-solver requires the river-solver extra')
-        LOG.info('Fallback: %s (256 deterministic range samples), Stack Press %s, River Solver %s, buy-in %d',
+        LOG.info('Fallback: %s (256 deterministic range samples), Stack Press %s, Deep Value %s, River Solver %s, buy-in %d',
                  args.fallback, 'ON' if args.stack_press else 'OFF',
+                 'ON' if args.deep_value else 'OFF',
                  'ON' if args.river_solver else 'OFF', args.buy_in)
     if args.fallback in (VERSION_V3, VERSION_V4, VERSION_V5) and isinstance(policy, history_cfr.HistoryPolicy):
         try:

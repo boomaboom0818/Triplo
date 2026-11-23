@@ -18,6 +18,10 @@ def enabled(policy):
     return bool(getattr(getattr(policy, 'fallback', None), 'stack_press', False))
 
 
+def deep_enabled(policy):
+    return bool(getattr(getattr(policy, 'fallback', None), 'deep_value', False))
+
+
 def targets(bet, pot, hero_bet, hero_stack, opponents):
     """Raise-to targets (2x pot and half the effective stack), or () if not meaningful.
 
@@ -32,6 +36,26 @@ def targets(bet, pot, hero_bet, hero_stack, opponents):
     return tuple(sorted({min(cover, bet + 2 * pot), min(cover, bet + max(2 * pot, effective // 2))}))
 
 
+def deep_targets(bet, pot, hero_bet, hero_stack, opponents):
+    """Expanded postflop raise-to targets across all depths for --deep-value.
+
+    Offers 0.75x pot, 1.5x pot, 2x pot, half effective stack, and effective
+    all-in (cover) so EV-based value_size can size up against calling fields at
+    any stack depth, never exceeding what live opponents can match.
+    """
+    cover = min(hero_bet + hero_stack, max((b + s for b, s in opponents), default=0))
+    effective = cover - hero_bet
+    if effective <= 0:
+        return ()
+    return tuple(sorted({
+        min(cover, bet + (3 * pot) // 4),
+        min(cover, bet + (3 * pot) // 2),
+        min(cover, bet + 2 * pot),
+        min(cover, bet + max(2 * pot, effective // 2)),
+        cover,
+    }))
+
+
 def sizes(street, bet, pot, lo, hi, hero_bet, hero_stack, opponents, existing):
     """Extra raise-to sizes within [lo, hi] that are not already on the menu.
 
@@ -41,6 +65,14 @@ def sizes(street, bet, pot, lo, hi, hero_bet, hero_stack, opponents, existing):
     if not street:
         return ()
     extra = {min(hi, max(lo, t)) for t in targets(bet, pot, hero_bet, hero_stack, opponents)}
+    return tuple(sorted(extra - set(existing)))
+
+
+def deep_sizes(street, bet, pot, lo, hi, hero_bet, hero_stack, opponents, existing):
+    """Expanded postflop raise-to sizes within [lo, hi] for --deep-value."""
+    if not street:
+        return ()
+    extra = {min(hi, max(lo, t)) for t in deep_targets(bet, pot, hero_bet, hero_stack, opponents) if t >= lo}
     return tuple(sorted(extra - set(existing)))
 
 

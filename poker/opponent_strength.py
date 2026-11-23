@@ -57,15 +57,19 @@ class OpponentField:
             player = OpponentRating.from_row(row)
             self.players.setdefault(player.name, player)  # moving leaderboard pages can overlap
 
-    def strong_check(self, hero, opponents, threshold=STRONG_BB100):
-        """Leave when strong opponents outnumber the weak seats that pay for them.
+    def strong_check(self, hero, opponents, threshold=STRONG_BB100, min_weak=0, max_strong=None):
+        """Leave when strong opponents outnumber weak seats, exceed max_strong, or a full table has too few weak seats.
 
         One strong bot is tolerated while at least as many weak bots sit with it.
+        When ``max_strong`` is set, more than that many strong opponents always
+        triggers a leave. When ``min_weak`` is positive and at least 4 opponents
+        are seated, fewer than ``min_weak`` weak seats also triggers a leave.
         Unrated seats count as neither, and bots on the hero's own account are ignored.
         """
         me = self.players.get(hero)
+        others = sorted(set(opponents) - {hero})
         strong, weak = [], []
-        for name in sorted(set(opponents) - {hero}):
+        for name in others:
             p = self.players.get(name)
             if p is None or (me and me.owner and p.owner == me.owner):
                 continue
@@ -73,8 +77,12 @@ class OpponentField:
                 strong.append(name)
             elif p.kind == 'no_code' or (p.results_bb100 is not None and p.results_bb100 <= WEAK_BB100):
                 weak.append(name)
+        if max_strong is not None and len(strong) > max_strong:
+            return StrongCheck(tuple(strong), tuple(weak), True, 'too many strong opponents')
+        if strong and len(weak) < len(strong):
+            return StrongCheck(tuple(strong), tuple(weak), True, 'strong opponent')
+        if min_weak > 0 and len(others) >= 4 and len(weak) < min_weak:
+            return StrongCheck(tuple(strong), tuple(weak), True, 'too few weak seats')
         if not strong:
             return StrongCheck((), tuple(weak), False, 'no strong opponent')
-        if len(weak) >= len(strong):
-            return StrongCheck(tuple(strong), tuple(weak), False, 'strong opponent offset by weak seats')
-        return StrongCheck(tuple(strong), tuple(weak), True, 'strong opponent')
+        return StrongCheck(tuple(strong), tuple(weak), False, 'strong opponent offset by weak seats')
