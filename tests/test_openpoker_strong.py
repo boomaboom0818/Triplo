@@ -187,3 +187,39 @@ def test_off_is_unchanged(monkeypatch, tmp_path):
         sent, rows, reads = play(monkeypatch, tmp_path, mode, messages)
         assert not reads and not any(m['type'] == 'leave_table' for m in sent)
         assert not any(r['type'] == 'strong_opponent_check' for r in rows)
+
+
+def test_silent_socket_reconnects_when_idle_timeout_is_set(monkeypatch, tmp_path):
+    websockets = pytest.importorskip('websockets.asyncio.client')
+    monkeypatch.setattr(client, 'active_game', lambda _: dict(playing=True, table_id='T', seat=3))
+    real_sleep = asyncio.sleep
+    monkeypatch.setattr(client.asyncio, 'sleep', lambda *_: real_sleep(0))
+    opened, sent = [], []
+    class Socket:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        async def send(self, message): sent.append(json.loads(message))
+        def __aiter__(self): return self.messages()
+        async def messages(self):
+            opened.append(1)
+            yield json.dumps(dict(type='connected', name='hero'))
+            if len(opened) == 1:
+                await asyncio.Event().wait()  # the server goes silent
+            yield json.dumps(dict(type='season_ended'))
+    monkeypatch.setattr(websockets, 'connect', lambda *a, **k: Socket())
+    log = tmp_path / 'session.jsonl'
+    args = SimpleNamespace(stop_on_season_end=True, auto_rebuy=False, buy_in=2000, log=log, idle_timeout=.05)
+    asyncio.run(client.run(args, object(), 'test-key'))
+    rows = [json.loads(line) for line in log.read_text().splitlines()]
+    lost = [r for r in rows if r['type'] == 'connection_lost']
+    assert len(opened) == 2 and len(lost) == 1 and lost[0]['idle'] and lost[0]['error'] == 'IdleTimeout'
+    assert [m['type'] for m in sent].count('resync_request') == 2  # resumes the seated table
+
+
+def test_idle_timeout_defaults_to_never(monkeypatch, tmp_path):
+    async def messages(sent):
+        yield json.dumps(dict(type='connected', name='hero'))
+        await asyncio.sleep(.2)  # long silence is fine when the watchdog is off
+        yield json.dumps(dict(type='season_ended'))
+    sent, rows, _ = play(monkeypatch, tmp_path, None, messages)
+    assert not any(r['type'] == 'connection_lost' for r in rows)

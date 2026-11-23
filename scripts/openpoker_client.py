@@ -213,6 +213,30 @@ def redact(value):
     return value
 
 
+class IdleTimeout(TimeoutError):
+    """No message at all from the server for --idle-timeout seconds."""
+
+
+async def incoming(ws, idle):
+    """Yield raw messages; raise IdleTimeout if the socket goes silent for `idle` seconds.
+
+    A seated table with hands in play is never silent for minutes, so a long gap means
+    a dead socket or a stuck table. Reconnecting resumes via the active-game lookup.
+    """
+    if not idle:
+        async for raw in ws:
+            yield raw
+        return
+    messages = aiter(ws)
+    while True:
+        try:
+            yield await asyncio.wait_for(anext(messages), idle)
+        except StopAsyncIteration:
+            return
+        except asyncio.TimeoutError:
+            raise IdleTimeout(f'no server messages for {idle:g}s') from None
+
+
 async def run(args, policy, key):
     avoider = None
     tasks = {}  # 'requeue': a delayed lobby rejoin after an --avoid-strong leave
@@ -285,7 +309,7 @@ async def _run(args, policy, key, avoider, tasks):
                     if move:
                         avoider.left_table()
                         await send(dict(type='leave_table'))
-                async for raw in ws:
+                async for raw in incoming(ws, getattr(args, 'idle_timeout', 0)):
                     msg = json.loads(raw)
                     kind = msg.get('type')
                     if trace and kind in ('hand_start', 'player_action', 'resync_response'):
@@ -447,6 +471,9 @@ async def _run(args, policy, key, avoider, tasks):
             details = dict(error=type(exc).__name__, reason=str(exc), retry_seconds=delay)
             if tasks.get('requeue'):
                 tasks.pop('requeue').cancel()  # never fire a stale rejoin on the next socket
+            if isinstance(exc, IdleTimeout):
+                details['idle'] = True  # silent socket, not a server close
+                delay = 1
             record(log, type='connection_lost', **details)
             LOG.warning('Connection lost (%s: %s); retrying in %ss', type(exc).__name__, exc, delay)
             await asyncio.sleep(delay)
@@ -473,6 +500,8 @@ def main():
                              'report logs what it would do, leave also leaves and requeues')
     parser.add_argument('--strong-bb100', type=float, default=None, metavar='BB100',
                         help='season BB/100 (prior-shrunk) at which an opponent counts as strong (default: 220)')
+    parser.add_argument('--idle-timeout', type=float, default=0., metavar='SECONDS',
+                        help='reconnect if the server sends nothing for this long (default 0: never)')
     parser.add_argument('--stack-press', action=argparse.BooleanOptionalAction, default=False,
                         help='Stack Press: with equity-guarded-v1, near-nut hands may raise up to the '
                              'whole stack (good vs weaker fields, risky vs strong tight ones)')
@@ -485,6 +514,8 @@ def main():
     parser.add_argument('--stop-on-season-end', action='store_true',
                         help='exit when the current season ends instead of joining the next one')
     args = parser.parse_args()
+    if args.idle_timeout < 0:
+        parser.error('--idle-timeout must be 0 (off) or positive seconds')
     if args.strong_bb100 is not None and args.avoid_strong == 'off':
         parser.error('--strong-bb100 requires --avoid-strong report or leave')
     if json.loads(args.checkpoint.read_text()).get('algorithm') in history_cfr.ALGORITHMS:
