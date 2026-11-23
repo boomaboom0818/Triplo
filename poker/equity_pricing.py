@@ -392,7 +392,8 @@ class GuardedEquityPolicyV4(GuardedEquityPolicyV3):
         return proposed
 
 
-FALLBACKS = ('equity-v1', 'equity-guarded-v1', VERSION, VERSION_V3, VERSION_V4)
+VERSION_V5 = 'equity-guarded-v5'
+FALLBACKS = ('equity-v1', 'equity-guarded-v1', VERSION, VERSION_V3, VERSION_V4, VERSION_V5)
 
 
 def make_fallback(name, stack_press=False, **options):
@@ -407,4 +408,7 @@ def make_fallback(name, stack_press=False, **options):
         return GuardedEquityPolicyV3(stack_press=stack_press, **options)
     if name == VERSION_V4:
         return GuardedEquityPolicyV4(stack_press=stack_press, **options)
+    if name == VERSION_V5:
+        from .river_solver_fallback import RiverSolverFallback
+        return RiverSolverFallback(stack_press=stack_press, **options)
     raise ValueError('unknown equity fallback: %s' % name)

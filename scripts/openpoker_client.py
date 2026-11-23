@@ -13,7 +13,9 @@ from urllib.request import Request, urlopen
 
 from poker.cfr import CFRPolicy, information_key
 from poker.config import load_checkpoint
-from poker.equity_pricing import FALLBACKS, VERSION_V3, VERSION_V4, GuardedEquityPolicyV3, make_fallback
+from poker.equity_pricing import (
+    FALLBACKS, VERSION_V3, VERSION_V4, VERSION_V5, GuardedEquityPolicyV3, make_fallback,
+)
 from poker.fast_game import LEAN_MENU
 from poker.game import Observation
 from poker.late_position import LatePositionSteals
@@ -483,7 +485,8 @@ async def _run(args, policy, key, avoider, tasks):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--checkpoint', required=True, type=Path)
-    parser.add_argument('--buy-in', type=int, choices=range(1000, 5001), default=2000, metavar='1000..5000')
+    parser.add_argument('--buy-in', type=int, choices=range(1000, 5001), metavar='1000..5000',
+                        help='chips to buy in for (default 1000 for v5, 2000 otherwise)')
     parser.add_argument('--auto-rebuy', action='store_true')
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--min-support', type=float, default=0.,
@@ -491,7 +494,7 @@ def main():
     parser.add_argument('--min-visits', type=int, default=64,
                         help='history model: minimum sampled average visits before using a learned row')
     parser.add_argument('--fallback', choices=('tight-v1', *FALLBACKS), default='tight-v1',
-                         help='rule fallback for history/lean policies; equity-guarded-v3/-v4 automatically '
+                         help='rule fallback for history/lean policies; guarded v3–v5 automatically '
                               f'uses late-position evidence from {LATE_POSITION_EVIDENCE} for history checkpoints')
     parser.add_argument('--trace', type=Path, help='optional redacted public events and replay snapshots for diagnostics')
     parser.add_argument('--log', type=Path, help='append decisions and hand results as JSON lines')
@@ -505,8 +508,10 @@ def main():
     parser.add_argument('--stack-press', action=argparse.BooleanOptionalAction, default=False,
                         help='Stack Press: with equity-guarded-v1, near-nut hands may raise up to the '
                              'whole stack (good vs weaker fields, risky vs strong tight ones)')
+    parser.add_argument('--river-solver', action=argparse.BooleanOptionalAction, default=None,
+                        help='heads-up river solver (v5 default at a 1000-chip buy-in, opt-in at deeper buy-ins)')
     parser.add_argument('--opponent-stats', type=Path,
-                        help='equity-guarded-v2/-v3/-v4: per-opponent postflop calling stats JSON (loaded, updated live, '
+                        help='guarded v2–v5: per-opponent postflop calling stats JSON (loaded, updated live, '
                              'saved after each hand); enables value sizing for opponents with enough data')
     parser.add_argument('--opponent-min-faced', type=int, default=20,
                         help='faced postflop bets needed before an opponent gets a measured calling profile')
@@ -514,6 +519,12 @@ def main():
     parser.add_argument('--stop-on-season-end', action='store_true',
                         help='exit when the current season ends instead of joining the next one')
     args = parser.parse_args()
+    if args.buy_in is None:
+        args.buy_in = 1000 if args.fallback == VERSION_V5 else 2000
+    if args.river_solver is None:
+        args.river_solver = args.fallback == VERSION_V5 and args.buy_in == 1000
+    if args.river_solver and args.fallback not in (VERSION_V4, VERSION_V5):
+        parser.error(f'--river-solver requires --fallback {VERSION_V4} or {VERSION_V5}')
     if args.idle_timeout < 0:
         parser.error('--idle-timeout must be 0 (off) or positive seconds')
     if args.strong_bb100 is not None and args.avoid_strong == 'off':
@@ -547,14 +558,26 @@ def main():
             parser.error('--min-support requires a lean checkpoint')
         policy = CFRPolicy(saved['sums'], args.seed, saved['abstraction'])
     if args.fallback in FALLBACKS:
+        if (args.fallback == VERSION_V5 or args.river_solver) and not isinstance(policy, history_cfr.HistoryPolicy):
+            parser.error('v5 and --river-solver require a history checkpoint for verified replay')
         if not hasattr(policy, 'fallback'):
             parser.error('equity fallbacks require a history or lean checkpoint')
         if args.stack_press and not args.fallback.startswith('equity-guarded'):
             parser.error('--stack-press requires an equity-guarded fallback')
-        policy.fallback = make_fallback(args.fallback, stack_press=args.stack_press)
-        LOG.info('Fallback: %s (256 deterministic range samples), Stack Press %s',
-                 args.fallback, 'ON' if args.stack_press else 'OFF')
-    if args.fallback in (VERSION_V3, VERSION_V4) and isinstance(policy, history_cfr.HistoryPolicy):
+        try:
+            if args.fallback == VERSION_V5 or args.river_solver:
+                policy.fallback = make_fallback(VERSION_V5, stack_press=args.stack_press,
+                                                solve_river=args.river_solver)
+            else:
+                policy.fallback = make_fallback(args.fallback, stack_press=args.stack_press)
+        except ModuleNotFoundError as exc:
+            if exc.name != 'numpy':
+                raise
+            parser.error('--river-solver requires the river-solver extra')
+        LOG.info('Fallback: %s (256 deterministic range samples), Stack Press %s, River Solver %s, buy-in %d',
+                 args.fallback, 'ON' if args.stack_press else 'OFF',
+                 'ON' if args.river_solver else 'OFF', args.buy_in)
+    if args.fallback in (VERSION_V3, VERSION_V4, VERSION_V5) and isinstance(policy, history_cfr.HistoryPolicy):
         try:
             evidence = LatePositionSteals.load(LATE_POSITION_EVIDENCE)
         except FileNotFoundError:
@@ -565,8 +588,8 @@ def main():
             policy.fallback.late_position_evidence = evidence
             LOG.info('Late-Position Steals: loaded %d saved lineups', len(evidence.evidence))
     if args.opponent_stats is not None:
-        if args.fallback not in ('equity-guarded-v2', VERSION_V3, VERSION_V4):
-            parser.error('--opponent-stats requires --fallback equity-guarded-v2, -v3, or -v4')
+        if args.fallback not in ('equity-guarded-v2', VERSION_V3, VERSION_V4, VERSION_V5):
+            parser.error('--opponent-stats requires a guarded v2–v5 fallback')
         from poker.opponent_stats import OpponentStats
         policy.fallback.opponent_stats = OpponentStats.load(args.opponent_stats, min_faced=args.opponent_min_faced)
         stats = policy.fallback.opponent_stats

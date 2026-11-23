@@ -5,6 +5,7 @@ requires-python = ">=3.11"
 dependencies = ["pokerkit==0.7.7"]
 [project.optional-dependencies]
 openpoker = ["websockets>=15,<17"]
+river-solver = ["numpy>=1.26"]
 test = ["pytest==9.2.0"]
 [tool.pytest.ini_options]
 pythonpath = ["."]

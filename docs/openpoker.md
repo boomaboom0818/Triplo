@@ -48,6 +48,26 @@ the final snapshot. See [the river/history report](RIVER-003.md) for limitations
 and a short diagnostic command. Bounded river checkpoints are local-only and are
 not accepted by the live client.
 
+## Triplo v5
+
+Use a history checkpoint and `--fallback equity-guarded-v5` for the v5 policy.
+V5 defaults to a 1,000-chip buy-in (50 BB at 10/20 blinds) and uses its
+calibrated heads-up river solver on eligible fallback decisions with verified
+history. The solver requires the optional `river-solver` extra:
+
+```bash
+uv pip install --python .venv/bin/python '.[openpoker,river-solver]'
+.venv/bin/python -m scripts.openpoker_client --checkpoint runs/bot/pressure-fresh-001/base-guard.json --fallback equity-guarded-v5
+```
+
+For a caller-heavy field, select the deeper buy-in explicitly with
+`--buy-in 2500` or `--buy-in 5000`. Those presets default to the guarded v4
+betting behavior. `--river-solver` enables the combined variant at deeper
+buy-ins. `--no-river-solver` runs the solver-off control at any buy-in.
+The switch is set when the client starts and applies throughout the session.
+Eligible decisions log the solver probability, proposed action and baseline
+inside `equity_fallback.river_solver`.
+
 ## Leaving tables when strong opponents sit down (opt-in)
 
 Ported from Triplo Turbo's "apex shark" rule. Off by default; OpenPoker only.
