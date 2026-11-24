@@ -1,18 +1,30 @@
 # Triplo v7
 
-Triplo v7 is v6-fast plus one opt-in switch, `--turn-defend`. A second switch,
+Triplo v7 adds one opt-in switch, `--turn-defend`, to both v6 builds. A second switch,
 `--turn-probe`, is in the code with tests but stays off.
 
+| Build | Base | Command line |
+|---|---|---|
+| **v7-fast** (live; released as "v7") | v6-fast | v6-fast flags + `--turn-defend` |
+| **v7-tight** | v6-tight | v6-tight flags (`--fallback equity-guarded-v5 --river-solver`, 50 BB buy-in, learned postflop) + `--turn-defend` |
+
 ```bash
+# v7-fast
 .venv/bin/python -m scripts.openpoker_client --checkpoint runs/bot/pressure-fresh-001/base-guard.json \
   --min-visits 64 --buy-in 5000 --auto-rebuy --fallback equity-guarded-v5 \
   --stack-press --deep-value --no-learned-postflop --river-solver \
   --defend-3bet --flop-peel --turn-defend --opponent-stats runs/bot/opponent-stats.json \
   --avoid-strong leave --strong-bb100 220 --min-weak 2 --max-strong 1 --idle-timeout 300
+
+# v7-tight
+.venv/bin/python -m scripts.openpoker_client --checkpoint runs/bot/pressure-fresh-001/base-guard.json \
+  --min-visits 64 --buy-in 1000 --auto-rebuy --fallback equity-guarded-v5 --river-solver \
+  --defend-3bet --flop-peel --turn-defend --opponent-stats runs/bot/opponent-stats.json \
+  --avoid-strong leave --strong-bb100 220 --min-weak 2 --max-strong 1 --idle-timeout 300
 ```
 
-Drop `--turn-defend` to get v6-fast exactly. Both switches default off and also work on the
-v6-tight path (no `--deep-value`).
+Drop `--turn-defend` to get v6-fast or v6-tight exactly. In v7-fast the check runs inside the Deep
+Value postflop path; in v7-tight it runs on the regular v5 fallback paths, like `--flop-peel`.
 
 ## The leak
 
@@ -53,9 +65,9 @@ draws and 75% of air, keep unimproved pairs as checks, skip measured sticky call
 other players, live opponents folded 60% to these bets, but to Triplo's own turn probes they folded
 29% (n=38, break-even 33%), and in simulation it lost 2.2 [-6.0, +1.6] BB/100 in `real_mix`. Not shipped.
 
-## Evidence
+## First screen (v7-fast)
 
-`scripts/v6_field_benchmark.py --deals 4096 --arms v6_fast v7_defend v7_probe v7_fast`, measured
+`scripts/v6_field_benchmark.py --deals 4096 --arms v6_fast v7_defend v7_probe v7_defend_probe`, measured
 opponent profiles, 250 BB hero, paired deltas vs v6-fast, 95% intervals. The new `stab_exploiter`
 field is the Doppio-style `HudExploiter` plus the live stab pattern: it checks back 45% of unmade
 flops, then bets 2/3 pot with any two cards into a checked turn (75%) or river (60%).
@@ -72,3 +84,4 @@ flops, then bets 2/3 pot with any two cards into a checked turn (75%) or river (
 Turn fold rate against `stab_exploiter`: 65.6% -> 55.9%. The spot is rare in these scripted fields
 (most bots bet every flop), so most cells are unchanged. These are simulations; the scripted stab
 bot does not adapt like the real Doppio. Confirm live, and roll back by dropping `--turn-defend`.
+

@@ -101,3 +101,18 @@ def test_make_fallback_and_client_wire_v7_switches(tmp_path, monkeypatch):
         _run_client(tmp_path, monkeypatch, '--fallback', 'equity-guarded-v3', '--turn-defend')
     with pytest.raises(SystemExit):
         _run_client(tmp_path, monkeypatch, '--fallback', 'equity-guarded-v3', '--turn-probe')
+
+
+def test_v7_crossplay_builds_match_live_command_lines(tmp_path):
+    from poker import history_cfr
+    from scripts.triplo_v7_crossplay import BOTS, build
+    from tests.test_v6_anti_exploit import _client_checkpoint
+    saved = history_cfr.load(_client_checkpoint(tmp_path))
+    built = {tag: build(tag, saved) for tag in BOTS}
+    for tag, policy in built.items():
+        fb = policy.fallback
+        assert fb.defend_3bet and fb.flop_peel and not fb.turn_probe
+        assert fb.turn_defend is tag.startswith('v7')
+        fast = tag.endswith('fast')
+        assert fb.deep_value is fast and fb.stack_press is fast
+        assert policy.learned_postflop is not fast

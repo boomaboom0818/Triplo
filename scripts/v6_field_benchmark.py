@@ -698,7 +698,9 @@ ARM_PRESETS = {
     'fix123_all': {'fallback_kwargs': {'defend_3bet': True, 'flop_peel': True, 'semi_bluff': True}},
     'v7_defend': {'fallback_kwargs': {'defend_3bet': True, 'flop_peel': True, 'turn_defend': True}},
     'v7_probe': {'fallback_kwargs': {'defend_3bet': True, 'flop_peel': True, 'turn_probe': True}},
-    'v7_fast': {'fallback_kwargs': {'defend_3bet': True, 'flop_peel': True, 'turn_defend': True, 'turn_probe': True}},
+    'v7_fast': {'fallback_kwargs': {'defend_3bet': True, 'flop_peel': True, 'turn_defend': True}},
+    'v7_defend_probe': {'fallback_kwargs': {'defend_3bet': True, 'flop_peel': True, 'turn_defend': True, 'turn_probe': True}},
+    'v7_tight': {'base': 'v5', 'fallback_kwargs': {'defend_3bet': True, 'flop_peel': True, 'turn_defend': True}},
 }
 
 
