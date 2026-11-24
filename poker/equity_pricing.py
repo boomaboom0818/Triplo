@@ -214,6 +214,7 @@ class GuardedEquityPolicyV2(GuardedEquityPolicy):
         self._draws = None
         if isinstance(proposed, int):
             return self.value_size(o, proposed)
+        proposed = self._after_postflop_baseline(o, proposed)
         if o.call and 'fold' in o.legal:
             if o.street == 3 and o.call > 200 and not private_strength(
                     tuple(CARD_ID[c] for c in o.hole), tuple(CARD_ID[c] for c in o.board))[0]:
@@ -221,6 +222,10 @@ class GuardedEquityPolicyV2(GuardedEquityPolicy):
             priced = self.price_call(o)
             if priced is not None:
                 return priced
+        return proposed
+
+    def _after_postflop_baseline(self, o, proposed):
+        """Hook between the baseline postflop check/call/fold and side-pot pricing."""
         return proposed
 
     def draws(self, o):
@@ -417,6 +422,22 @@ class GuardedEquityPolicyV4(GuardedEquityPolicyV3):
             realized = equity * (0.96 if in_pos else 0.92) - error
             return realized >= price + (0.0 if in_pos else 0.02)
         return False
+
+    def _after_postflop_baseline(self, o, proposed):
+        """Flop Peel without Deep Value (Triplo v6-tight): a baseline flop fold gets the same
+        peel check that ``_act_deep_value`` applies, before side-pot pricing has the last word."""
+        if not (self.flop_peel and o.street == 1 and o.call and proposed == 'fold' and self.last):
+            return proposed
+        hole = tuple(CARD_ID[c] for c in o.hole)
+        board = tuple(CARD_ID[c] for c in o.board)
+        _, _, pair = private_strength(hole, board)
+        reraised = any(h[2] > 0 and isinstance(h[3], int) and h[5] > 0 for h in o.history)
+        equity, error, price = self.last['equity'], self.last['standard_error'], self.last['pot_odds']
+        usable = equity * .90 - error
+        if self._flop_peel_call(o, hole, board, equity, error, price, usable, pair, reraised, sum(o.active) - 1):
+            self.last = dict(self.last, flop_peel=True)
+            return 'call'
+        return proposed
 
     def _semi_bluff_bet(self, o, hole, board, equity, raises, acting, opponents, reraised):
         """Opt-in Fix #3: selective flop/turn semi-bluffs strictly vs measured non-sticky opponents."""
@@ -648,6 +669,7 @@ class GuardedEquityPolicyV4(GuardedEquityPolicyV3):
         self._draws = None
         if isinstance(proposed, int):
             return self.value_size(o, proposed)
+        proposed = self._after_postflop_baseline(o, proposed)
         if o.call and 'fold' in o.legal:
             if o.street == 3 and o.call > 200 and not private_strength(
                     tuple(CARD_ID[c] for c in o.hole), tuple(CARD_ID[c] for c in o.board))[0]:
