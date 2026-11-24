@@ -26,7 +26,7 @@ from math import sqrt
 from random import Random
 
 from .equity_policy import EquityPolicy, GuardedEquityPolicy, estimate_equity, opponent_ranges, private_strength
-from .fast_eval import CARD_ID, evaluate
+from .fast_eval import CARD_ID, STRAIGHT, evaluate
 
 VERSION = 'equity-guarded-v2'
 # Calling threshold on hand-strength percentile: base + slope * pot-odds price.
@@ -158,6 +158,38 @@ def sample_showdowns(o, samples, model='v1'):
     raise RuntimeError('equity sampling budget exhausted')
 
 
+def draw_outs(hole, board):
+    """Exact clean flush + straight draw outs on flop/turn (0 on river or made straight+)."""
+    if len(board) >= 5:
+        return 0
+    cards = hole + board
+    if (evaluate(cards) >> 20) >= 4:
+        return 0
+    suits = [0, 0, 0, 0]
+    bsuits = [0, 0, 0, 0]
+    branks = 0
+    for c in board:
+        bsuits[c & 3] += 1
+        suits[c & 3] += 1
+        branks |= 1 << (c >> 2)
+    ranks = branks
+    for c in hole:
+        suits[c & 3] += 1
+        ranks |= 1 << (c >> 2)
+    flush_suit = next((s for s in range(4) if suits[s] == 4 and suits[s] > bsuits[s]), -1)
+    used = set(cards)
+    outs = 0
+    if flush_suit >= 0:
+        outs += sum(1 for r in range(13) if (r * 4 + flush_suit) not in used)
+    for r in range(13):
+        if ranks & (1 << r):
+            continue
+        sh = STRAIGHT[ranks | (1 << r)]
+        if sh >= 0 and sh > STRAIGHT[branks | (1 << r)]:
+            outs += 3 if flush_suit >= 0 else 4
+    return outs
+
+
 class GuardedEquityPolicyV2(GuardedEquityPolicy):
     """``equity-guarded-v1`` plus side-pot call pricing and EV-based value sizing.
 
@@ -167,8 +199,8 @@ class GuardedEquityPolicyV2(GuardedEquityPolicy):
     """
     VERSION = VERSION
 
-    def __init__(self, samples=256, stack_press=False, profiles=None):
-        super().__init__(samples, stack_press)
+    def __init__(self, samples=256, stack_press=False, profiles=None, defend_3bet=False):
+        super().__init__(samples, stack_press, defend_3bet=defend_3bet)
         self.profiles = dict(profiles or {})
 
     def threshold(self, position):
@@ -303,8 +335,8 @@ class GuardedEquityPolicyV3(GuardedEquityPolicyV2):
     VERSION = VERSION_V3
     RANGE_MODEL = 'v3'
 
-    def __init__(self, samples=256, stack_press=False, profiles=None):
-        super().__init__(samples, stack_press, profiles)
+    def __init__(self, samples=256, stack_press=False, profiles=None, defend_3bet=False):
+        super().__init__(samples, stack_press, profiles, defend_3bet=defend_3bet)
         self.late_position_evidence = None
 
     def late_position_open(self, o, action, seats, bb, pot, wire, *, history_complete):
@@ -336,9 +368,112 @@ class GuardedEquityPolicyV4(GuardedEquityPolicyV3):
     """
     VERSION = VERSION_V4
 
-    def __init__(self, samples=256, stack_press=False, profiles=None, deep_value=False):
-        super().__init__(samples, stack_press, profiles)
+    def __init__(self, samples=256, stack_press=False, profiles=None, deep_value=False,
+                 defend_3bet=False, flop_peel=False, semi_bluff=False):
+        super().__init__(samples, stack_press, profiles, defend_3bet=defend_3bet)
         self.deep_value = deep_value
+        self.flop_peel = flop_peel
+        self.semi_bluff = semi_bluff
+
+    def _all_non_sticky(self, acting):
+        """True only when every live acting opponent has a measured non-sticky profile.
+
+        Uses predicted fold rate at half-pot (base + slope / 3 >= 0.38) so
+        calling stations (LooseCaller ~0.10-0.19, PROFILES['sticky'] ~0.30) and
+        cold-start unknowns are strictly excluded, while price-sensitive regulars
+        (high slope, moderate/low base) are recognized as foldable.
+        """
+        if not acting:
+            return False
+        for i in acting:
+            if i not in self.profiles and None not in self.profiles:
+                return False
+            base, slope = self.threshold(i)
+            if base + slope / 3.0 < 0.38:
+                return False
+        return True
+
+    def _flop_peel_call(self, o, hole, board, equity, error, price, usable, pair, reraised, opponents):
+        """Opt-in Fix #2: relax flop call threshold vs small/medium flop c-bets."""
+        if o.street != 1 or not o.call or reraised or opponents > 2:
+            return False
+        pot_before = max(1, o.pot - o.call)
+        bet_frac = o.call / pot_before
+        if bet_frac > 0.78:
+            return False
+        bettor = next((h[1] for h in reversed(o.history) if h[2] == 1 and isinstance(h[3], int)), None)
+        in_pos = bettor is not None and o.position > bettor
+        outs = draw_outs(hole, board)
+        # Implied-odds realization credit for draws and pairs vs small/medium flop c-bets
+        if outs >= 8:
+            # Flush draw / OESD: strong implied odds up to ~0.75x pot
+            return (equity - error) >= price - (0.02 if in_pos else 0.0)
+        if bet_frac <= 0.67 and (outs >= 4 or pair):
+            # Gutshot or made pair (middle/bottom/underpair): relax the harsh 0.90 + 0.05 margin
+            realized = equity * (0.97 if in_pos else 0.94) - error
+            return realized >= price - (0.01 if in_pos else 0.0)
+        # No pair, no straight/flush draw (e.g. two overcards + backdoors): peel only small HU bets
+        if opponents == 1 and bet_frac <= 0.55:
+            realized = equity * (0.96 if in_pos else 0.92) - error
+            return realized >= price + (0.0 if in_pos else 0.02)
+        return False
+
+    def _semi_bluff_bet(self, o, hole, board, equity, raises, acting, opponents, reraised):
+        """Opt-in Fix #3: selective flop/turn semi-bluffs strictly vs measured non-sticky opponents."""
+        if o.street not in (1, 2) or o.call or reraised or not raises:
+            return None
+        if opponents > 2 or not self._all_non_sticky(acting):
+            return None
+        eff = min(o.stacks[o.position], max((o.stacks[i] for i in acting), default=0))
+        if eff <= 0:
+            return None
+        outs = draw_outs(hole, board)
+        pre_raises = [h[1] for h in o.history if h[2] == 0 and isinstance(h[3], int)]
+        pf_agg = pre_raises[-1] if pre_raises else None
+        is_pfr = (pf_agg == o.position)
+        hero_bet_flop = any(h[2] == 1 and h[1] == o.position and isinstance(h[3], int) for h in o.history)
+        min_fold33 = min(self.threshold(i)[0] + self.threshold(i)[1] / 3.0 for i in acting)
+
+        draws_only = (self.semi_bluff == 'draws')
+        should_bet = False
+        target_frac = 0.50
+        if o.street == 1:
+            if outs >= 8 and (opponents == 1 or (outs >= 12 and equity >= 0.35)):
+                # Strong draw semi-bluff (flush draw / OESD / combo draw)
+                should_bet = True
+                target_frac = 0.50
+            elif not draws_only and opponents == 1 and is_pfr:
+                # Disciplined heads-up c-bet as preflop aggressor vs non-sticky opponent
+                if outs >= 4 or equity >= 0.32:
+                    should_bet = True
+                    target_frac = 0.50
+                elif min_fold33 >= 0.52:
+                    h = blake2b(repr(('sb-f1', hole, board, o.pot, o.position)).encode(), digest_size=8).digest()
+                    if (int.from_bytes(h, 'big') / (1 << 64)) < 0.25:
+                        should_bet = True
+                        target_frac = 0.50
+        else:  # o.street == 2 (turn)
+            if opponents == 1:
+                if outs >= 8:
+                    # Strong draw turn semi-bluff (flush draw / OESD)
+                    should_bet = True
+                    target_frac = 0.65
+                elif not draws_only and hero_bet_flop and outs >= 4 and min_fold33 >= 0.55:
+                    # Selective gutshot second barrel vs tight-folding opponents
+                    h = blake2b(repr(('sb-t2', hole, board, o.pot, o.position)).encode(), digest_size=8).digest()
+                    if (int.from_bytes(h, 'big') / (1 << 64)) < 0.35:
+                        should_bet = True
+                        target_frac = 0.65
+
+        if not should_bet:
+            return None
+        # Disciplined bluff sizing: never overbet or commit > 45% of effective stack as a semi-bluff
+        target = max(2, round(o.pot * target_frac))
+        cap = min(o.pot, int(0.45 * eff))
+        candidates = [a for a in raises if a <= cap]
+        if not candidates:
+            return None
+        return min(candidates, key=lambda a: (abs(a - target), a))
 
     def _act_deep_value(self, o):
         self._draws = None
@@ -351,7 +486,7 @@ class GuardedEquityPolicyV4(GuardedEquityPolicyV3):
         raises = [a for a in o.legal if isinstance(a, int)]
         hole = tuple(CARD_ID[c] for c in o.hole)
         board = tuple(CARD_ID[c] for c in o.board)
-        strong, top_pair, _ = private_strength(hole, board)
+        strong, top_pair, pair = private_strength(hole, board)
         board_plays = o.street == 3 and evaluate(hole + board) == evaluate(board)
         reraised = any(h[2] > 0 and isinstance(h[3], int) and h[5] > 0 for h in o.history)
         base_thresh, val_thresh, big_thresh = (
@@ -383,10 +518,18 @@ class GuardedEquityPolicyV4(GuardedEquityPolicyV3):
                 proposed = bounded[-1] if press or usable > big_thresh else bounded[0]
         if proposed is None:
             if not o.call:
+                if self.semi_bluff and not board_plays and not strong and not top_pair:
+                    sb = self._semi_bluff_bet(o, hole, board, equity, raises, acting, opponents, reraised)
+                    if sb is not None:
+                        self.last = dict(self.last, version=self.VERSION, semi_bluff=True, chosen_size=sb)
+                        return sb
                 proposed = 'call'
             elif o.street == 3 and o.call > 200 and not strong:
                 proposed = 'fold' if 'fold' in o.legal else 'call'
             elif usable >= price + (.025 if o.street == 3 else .05):
+                proposed = 'call'
+            elif self.flop_peel and self._flop_peel_call(o, hole, board, equity, error, price, usable, pair, reraised, opponents):
+                self.last = dict(self.last, flop_peel=True)
                 proposed = 'call'
             else:
                 proposed = 'fold' if 'fold' in o.legal else 'call'

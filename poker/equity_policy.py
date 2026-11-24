@@ -14,7 +14,7 @@ from math import sqrt
 from random import Random
 
 from .fast_eval import CARD_ID, NAMES, evaluate
-from .rule_opponents import RulePolicy, chen
+from .rule_opponents import RANKS, RulePolicy, chen
 
 
 @lru_cache(maxsize=16384)
@@ -267,12 +267,112 @@ class GuardedEquityPolicy(EquityPolicy):
     """
     STACK_PRESS_EQUITY = .80
 
-    def __init__(self, samples=256, stack_press=False):
+    def __init__(self, samples=256, stack_press=False, defend_3bet=False):
         super().__init__(samples)
         self.stack_press = stack_press
+        self.defend_3bet = defend_3bet
+
+    def _preflop_commit_limit(self, o, score):
+        """Maximum total preflop commitment (normalized chips) for a given hand."""
+        if score >= 15:
+            return 10 ** 9
+        if score >= 12:
+            return 200
+        if not self.defend_3bet:
+            return 20 if score >= 9 else 6
+        raises = sum(1 for h in o.history if h[2] == 0 and isinstance(h[3], int))
+        if raises < 2:
+            return 20 if score >= 9 else 6
+        if raises >= 3:
+            # Facing a 4-bet+: stay disciplined; only TT/AQ+/AKo call moderate 4-bets.
+            return 60 if score >= 10 else 0
+        # Facing a 3-bet (raises == 2): price- and position-aware caps.
+        last_raiser = next((h[1] for h in reversed(o.history) if h[2] == 0 and isinstance(h[3], int)), -1)
+        in_pos = o.position > last_raiser
+        r1, r2 = sorted((RANKS.index(c[0]) for c in o.hole), reverse=True)
+        suited = o.hole[0][1] == o.hole[1][1]
+        pair = (r1 == r2)
+        if score >= 10:  # AKo, AQs, AJs, KQs, TT
+            if (r1 == 12 and r2 >= 10) or (pair and r1 >= 8):  # AKo, AQs, TT
+                return 52 if in_pos else 44
+            return 42 if in_pos else 34
+        if score >= 9:  # 99, AQo, KJs, QJs, JTs
+            return 38 if in_pos else 30
+        if suited and r1 == 12:  # ATs, A9s-A2s
+            return 30 if in_pos else 26
+        if pair:  # 88-22
+            if r1 >= 6:  # 88
+                return 30 if in_pos else 26
+            if r1 >= 5:  # 77
+                return 28 if in_pos else 24
+            eff_behind = min(o.stacks[o.position],
+                             max((o.stacks[i] for i, a in enumerate(o.active) if a and i != o.position), default=0))
+            if r1 >= 3 and eff_behind >= 8 * o.call:  # 66, 55
+                return 28 if in_pos else 22
+            if eff_behind >= 10 * o.call:  # 44-22 deep implied odds
+                return 26 if in_pos else (20 if eff_behind >= 14 * o.call else 0)
+            return 0
+        if suited and score >= 7.5:  # KTs, QTs, J9s, T9s, 98s
+            return 30 if in_pos else 26
+        if suited and score >= 6.0:  # 87s, 76s, 65s, K9s, Q9s, J8s, T8s
+            return 28 if in_pos else 22
+        if suited and (r1 >= 10 or (r1 - r2 <= 2 and r2 >= 2)):  # K8s-K2s, Q8s-Q2s, 54s, 75s, 64s, 97s, 86s
+            return 26 if in_pos else (20 if (r1 == 11 and r2 >= 5) or (r1 - r2 == 1 and r2 >= 3) else 0)
+        if score >= 8:  # AJo, KQo
+            return 28 if in_pos else 22
+        if (r1 == 12 and r2 >= 8) or (r1 >= 10 and r2 >= 9):  # ATo, KJo, QJo
+            return 24 if in_pos else (20 if r1 == 12 else 0)
+        if in_pos and ((r1 == 12 and r2 >= 6) or (r1 == 11 and r2 == 8) or (r1 == 9 and r2 == 8)):  # A9o, A8o, KTo, JTo IP vs small 3b
+            return 22
+        return 0
+
+    def _act_preflop_defend_3bet(self, o):
+        """Price- and position-aware facing-3-bet defense (opt-in via defend_3bet=True)."""
+        raises_hist = [h for h in o.history if h[2] == 0 and isinstance(h[3], int)]
+        if len(raises_hist) < 2 or not o.call or 'fold' not in o.legal:
+            return None
+        score = chen(o.hole)
+        committed = preflop_commitment(o)
+        total_cost = committed + o.call
+        price = o.call / max(1, o.pot + o.call)
+        raises_legal = [a for a in o.legal if isinstance(a, int)]
+        # Tier 1: AA/KK never fold; 4-bet/raise when affordable.
+        if score >= 15:
+            if raises_legal and o.call < 40:
+                return raises_legal[min(len(raises_legal) - 2, len(raises_legal) - 1)] if len(raises_legal) > 1 else raises_legal[0]
+            return 'call'
+        # Tier 2: QQ/JJ/AKs keep 100 BB (200-chip) commitment discipline.
+        if score >= 12:
+            limit = 200
+            if len(raises_hist) == 2 and raises_legal and o.call < 40:
+                size = raises_legal[min(len(raises_legal) - 2, len(raises_legal) - 1)] if len(raises_legal) > 1 else raises_legal[0]
+                if size <= limit:
+                    return size
+            return 'call' if total_cost <= limit else 'fold'
+        # Cold-facing a 3-bet (hero did not open): stay tight.
+        hero_raised = any(h[1] == o.position for h in raises_hist)
+        if not hero_raised:
+            if len(raises_hist) == 2 and score >= 10 and total_cost <= 36 and price <= 0.42:
+                return 'call'
+            return 'fold'
+        limit = self._preflop_commit_limit(o, score)
+        if limit <= 0 or total_cost > limit:
+            return 'fold'
+        last_raiser = raises_hist[-1][1]
+        in_pos = o.position > last_raiser
+        if len(raises_hist) >= 3:
+            # Facing 4-bet+: require reasonable price too
+            return 'call' if price <= 0.36 else 'fold'
+        # Facing a 3-bet: price gate scales with hand tier and position
+        max_price = 0.45 if score >= 10 else 0.42 if score >= 9 else (0.40 if in_pos else 0.36)
+        return 'call' if price <= max_price else 'fold'
 
     def act(self, o):
         if not o.street:
+            if self.defend_3bet and o.history:
+                defended = self._act_preflop_defend_3bet(o)
+                if defended is not None:
+                    return defended
             proposed = super().act(o)
             score = chen(o.hole)
             if proposed == 'fold' or score < 7 or score >= 15 or not o.history:
@@ -339,7 +439,7 @@ class PressureGuard:
         self.version = version
         self.equity = EquityPolicy()
 
-    def act(self, o, proposed):
+    def act(self, o, proposed, fallback=None):
         if proposed == 'fold' or not o.call or 'fold' not in o.legal:
             return proposed
         if not o.street:
@@ -353,6 +453,17 @@ class PressureGuard:
             raises = sum(street == 0 and isinstance(action, int)
                          for _, _, street, action, _, _ in o.history)
             if raises < 2:
+                return proposed
+            if fallback is not None and getattr(fallback, 'defend_3bet', False):
+                if fallback.act(o) == 'fold':
+                    return 'fold'
+                score = chen(o.hole)
+                if score < 15 and o.history:
+                    limit = fallback._preflop_commit_limit(o, score)
+                    committed = preflop_commitment(o)
+                    cost = proposed if isinstance(proposed, int) else committed + o.call
+                    if cost > limit:
+                        return 'call' if committed + o.call <= limit else 'fold'
                 return proposed
         if self.equity.act(o) == 'fold':
             return 'fold'
