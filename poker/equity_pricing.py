@@ -374,11 +374,14 @@ class GuardedEquityPolicyV4(GuardedEquityPolicyV3):
     VERSION = VERSION_V4
 
     def __init__(self, samples=256, stack_press=False, profiles=None, deep_value=False,
-                 defend_3bet=False, flop_peel=False, semi_bluff=False):
+                 defend_3bet=False, flop_peel=False, semi_bluff=False,
+                 turn_defend=False, turn_probe=False):
         super().__init__(samples, stack_press, profiles, defend_3bet=defend_3bet)
         self.deep_value = deep_value
         self.flop_peel = flop_peel
         self.semi_bluff = semi_bluff
+        self.turn_defend = turn_defend
+        self.turn_probe = turn_probe
 
     def _all_non_sticky(self, acting):
         """True only when every live acting opponent has a measured non-sticky profile.
@@ -423,20 +426,98 @@ class GuardedEquityPolicyV4(GuardedEquityPolicyV3):
             return realized >= price + (0.0 if in_pos else 0.02)
         return False
 
+    TURN_DEFEND_MAX_FRAC = 0.85
+    TURN_PROBE_FRAC = 0.66
+    TURN_PROBE_AIR_RATE = 0.75
+
+    @staticmethod
+    def _turn_probe_line(o):
+        """True when nobody bet the flop, so a first turn bet is a probe, not a barrel."""
+        return not any(h[2] == 1 and isinstance(h[3], int) for h in o.history)
+
+    def _turn_defend_call(self, o, hole, board, equity, error, price, pair, reraised, opponents):
+        """Opt-in Triplo v7: stop overfolding heads-up to a first turn bet from a player who
+        did not bet the flop (a probe or delayed stab after Triplo checked).
+
+        Live v5-fast/v6 hands: Triplo folded 78% to 60-85% pot turn probes after the flop
+        checked through (break-even for a pure bluff is 43%), and its calls in these spots
+        won on average. Barrels (the bettor also bet the flop) and the river are unchanged.
+        """
+        if o.street != 2 or not o.call or reraised or opponents != 1:
+            return False
+        turn_bets = [h for h in o.history if h[2] == 2 and isinstance(h[3], int)]
+        if len(turn_bets) != 1:
+            return False
+        bettor = turn_bets[0][1]
+        if any(h[2] == 1 and h[1] == bettor and isinstance(h[3], int) for h in o.history):
+            return False
+        if o.call / max(1, o.pot - o.call) > self.TURN_DEFEND_MAX_FRAC:
+            return False
+        outs = draw_outs(hole, board)
+        if outs >= 8:
+            return equity - error >= price - 0.01
+        if pair or outs >= 4:
+            return equity * 0.96 - error >= price
+        return False
+
+    def _turn_probe_bet(self, o, hole, board, raises, acting, opponents, reraised, pair):
+        """Opt-in Triplo v7: bet the turn heads-up when the flop checked through.
+
+        Live OpenPoker field: 60% folds to 60-85% pot turn probes after a checked flop
+        (break-even 43%). Bets draws and most air; keeps unimproved pairs as checks for
+        showdown value; skips opponents measured as sticky callers.
+        """
+        if o.street != 2 or o.call or reraised or not raises or opponents != 1 or len(acting) != 1:
+            return None
+        if not self._turn_probe_line(o) or any(h[2] == 2 and isinstance(h[3], int) for h in o.history):
+            return None
+        villain = acting[0]
+        if (villain in self.profiles or None in self.profiles) and self.threshold(villain)[0] <= .18:
+            return None
+        if pair:
+            return None
+        if draw_outs(hole, board) < 4:
+            h = blake2b(repr(('turn-probe', hole, board, o.pot, o.position)).encode(), digest_size=8).digest()
+            if int.from_bytes(h, 'big') / (1 << 64) >= self.TURN_PROBE_AIR_RATE:
+                return None
+        eff = min(o.stacks[o.position], o.stacks[villain])
+        target = max(2, round(o.pot * self.TURN_PROBE_FRAC))
+        cap = min(o.pot, int(0.45 * eff))
+        candidates = [a for a in raises if a <= cap]
+        if not candidates:
+            return None
+        return min(candidates, key=lambda a: (abs(a - target), a))
+
     def _after_postflop_baseline(self, o, proposed):
         """Flop Peel without Deep Value (Triplo v6-tight): a baseline flop fold gets the same
         peel check that ``_act_deep_value`` applies, before side-pot pricing has the last word."""
-        if not (self.flop_peel and o.street == 1 and o.call and proposed == 'fold' and self.last):
+        if not self.last or o.street not in (1, 2):
+            return proposed
+        peel = self.flop_peel and o.street == 1 and o.call and proposed == 'fold'
+        defend = self.turn_defend and o.street == 2 and o.call and proposed == 'fold'
+        probe = self.turn_probe and o.street == 2 and not o.call and proposed == 'call'
+        if not (peel or defend or probe):
             return proposed
         hole = tuple(CARD_ID[c] for c in o.hole)
         board = tuple(CARD_ID[c] for c in o.board)
-        _, _, pair = private_strength(hole, board)
+        strong, top_pair, pair = private_strength(hole, board)
         reraised = any(h[2] > 0 and isinstance(h[3], int) and h[5] > 0 for h in o.history)
         equity, error, price = self.last['equity'], self.last['standard_error'], self.last['pot_odds']
-        usable = equity * .90 - error
-        if self._flop_peel_call(o, hole, board, equity, error, price, usable, pair, reraised, sum(o.active) - 1):
+        opponents = sum(o.active) - 1
+        if peel and self._flop_peel_call(o, hole, board, equity, error, price, equity * .90 - error,
+                                         pair, reraised, opponents):
             self.last = dict(self.last, flop_peel=True)
             return 'call'
+        if defend and self._turn_defend_call(o, hole, board, equity, error, price, pair, reraised, opponents):
+            self.last = dict(self.last, turn_defend=True)
+            return 'call'
+        if probe and not strong and not top_pair:
+            raises = [a for a in o.legal if isinstance(a, int)]
+            acting = [i for i, a in enumerate(o.active) if a and i != o.position and o.stacks[i] > 0]
+            bet = self._turn_probe_bet(o, hole, board, raises, acting, opponents, reraised, pair)
+            if bet is not None:
+                self.last = dict(self.last, turn_probe=True, chosen_size=bet)
+                return bet
         return proposed
 
     def _semi_bluff_bet(self, o, hole, board, equity, raises, acting, opponents, reraised):
@@ -539,6 +620,11 @@ class GuardedEquityPolicyV4(GuardedEquityPolicyV3):
                 proposed = bounded[-1] if press or usable > big_thresh else bounded[0]
         if proposed is None:
             if not o.call:
+                if self.turn_probe and not board_plays and not strong and not top_pair:
+                    tp = self._turn_probe_bet(o, hole, board, raises, acting, opponents, reraised, pair)
+                    if tp is not None:
+                        self.last = dict(self.last, version=self.VERSION, turn_probe=True, chosen_size=tp)
+                        return tp
                 if self.semi_bluff and not board_plays and not strong and not top_pair:
                     sb = self._semi_bluff_bet(o, hole, board, equity, raises, acting, opponents, reraised)
                     if sb is not None:
@@ -551,6 +637,9 @@ class GuardedEquityPolicyV4(GuardedEquityPolicyV3):
                 proposed = 'call'
             elif self.flop_peel and self._flop_peel_call(o, hole, board, equity, error, price, usable, pair, reraised, opponents):
                 self.last = dict(self.last, flop_peel=True)
+                proposed = 'call'
+            elif self.turn_defend and self._turn_defend_call(o, hole, board, equity, error, price, pair, reraised, opponents):
+                self.last = dict(self.last, turn_defend=True)
                 proposed = 'call'
             else:
                 proposed = 'fold' if 'fold' in o.legal else 'call'
