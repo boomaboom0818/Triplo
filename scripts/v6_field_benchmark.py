@@ -54,7 +54,7 @@ STACK_PROFILES = (
     (35, 100, 150, 250, 500),
 )
 HERO_BUYIN_BB = 250
-ALL_FIELDS = ('sticky', 'real_mix', 'pressure', 'turbo', 'hud_exploiter')
+ALL_FIELDS = ('sticky', 'real_mix', 'pressure', 'turbo', 'hud_exploiter', 'stab_exploiter')
 
 
 class ScriptedOpponent:
@@ -283,6 +283,30 @@ class HudExploiter:
         return passive
 
 
+class StabExploiter(HudExploiter):
+    """HudExploiter plus the stab exploit measured on live OpenPoker hands against Triplo
+    v5-fast/v6 (Triplo folded 78% to 60-85% pot turn probes after a checked flop): it checks
+    back 45% of unmade flops, then bets 2/3 pot with any two cards into a checked turn (75%)
+    or checked river (60%) when nobody bet the previous street, heads-up."""
+
+    def _postflop(self, o, game, lo, hi, passive):
+        if o.street == 1 and not o.call:
+            # Live Doppio bet 60% of flops checked to it, not every one: check back the rest
+            # of its unmade hands so turn probe spots arise.
+            hole = tuple(CARD_ID[c] for c in o.hole)
+            board = tuple(CARD_ID[c] for c in o.board)
+            strong, top_pair, _ = private_strength(hole, board)
+            if not strong and not top_pair and self._u(o, 'flop-check') < 0.45:
+                return 'call'
+        if o.street >= 2 and not o.call and lo is not None and sum(o.active) == 2:
+            prev_bets = any(h[2] == o.street - 1 and isinstance(h[3], int) for h in o.history)
+            rate = 0.75 if o.street == 2 else 0.60
+            if not prev_bets and self._u(o, 'stab') < rate:
+                top = max(game.bets) if game is not None else 0
+                return self._clamp(lo, hi, top + max(2, o.pot * 0.66))
+        return super()._postflop(o, game, lo, hi, passive)
+
+
 def event(o, bets, stacks, action):
     i, top = o.position, max(bets)
     if action == 'fold':
@@ -361,6 +385,8 @@ def make_lineup(field, seed, hero):
         tags = ['turbo'] * 5
     elif field == 'hud_exploiter':
         tags = ['hud_exploiter'] * 5
+    elif field == 'stab_exploiter':
+        tags = ['stab_exploiter'] * 5
     elif field == 'real_mix':
         tags = ['tight', 'station-v1', 'loose1', 'pressure', 'turbo']
         Random(f'realmix-seats:{seed}').shuffle(tags)
@@ -378,6 +404,7 @@ def make_bot_instances(hero):
         'tight': ScriptedOpponent('tight'),
         'pressure': ScriptedOpponent('pressure'),
         'hud_exploiter': HudExploiter(target_seat=hero),
+        'stab_exploiter': StabExploiter(target_seat=hero),
     }
 
 
@@ -472,7 +499,7 @@ def play_one_hand(policy, seed, hero, stacks, tags, proc, profiles_map, track_hu
             tag = tags[pos]
             if tag == 'turbo':
                 action = turbo_action(proc, game, o, events, seed)
-            elif tag == 'hud_exploiter':
+            elif tag in ('hud_exploiter', 'stab_exploiter'):
                 action = bots[tag].act(o, game)
             else:
                 action = bots[tag].act(o)
@@ -562,7 +589,7 @@ def calibrate_profiles(saved, warmup_deals=300):
                             text=True, bufsize=1, env={'PATH': '/usr/bin:/bin'})
     try:
         # Run warmup hands across all opponent types
-        for field in ('sticky', 'real_mix', 'pressure', 'hud_exploiter', 'turbo'):
+        for field in ('sticky', 'real_mix', 'pressure', 'hud_exploiter', 'stab_exploiter', 'turbo'):
             n = warmup_deals if field != 'turbo' else min(200, warmup_deals)
             for i in range(n):
                 seed = 900_000_000 + hash(field) % 100000 + i
@@ -580,7 +607,7 @@ def calibrate_profiles(saved, warmup_deals=300):
         proc.stdout.close()
         proc.wait(timeout=10)
     profiles = {}
-    for tag in ('sticky', 'loose1', 'station-v1', 'tight', 'pressure', 'turbo', 'hud_exploiter'):
+    for tag in ('sticky', 'loose1', 'station-v1', 'tight', 'pressure', 'turbo', 'hud_exploiter', 'stab_exploiter'):
         base, slope, faced = stats.fit(tag)
         profiles[tag] = (round(base, 4), round(slope, 4))
     return profiles, {tag: stats.fit(tag) for tag in profiles}
@@ -669,6 +696,9 @@ ARM_PRESETS = {
     'fix23_peel_bluff': {'fallback_kwargs': {'flop_peel': True, 'semi_bluff': True}},
     'fix123_draws': {'fallback_kwargs': {'defend_3bet': True, 'flop_peel': True, 'semi_bluff': 'draws'}},
     'fix123_all': {'fallback_kwargs': {'defend_3bet': True, 'flop_peel': True, 'semi_bluff': True}},
+    'v7_defend': {'fallback_kwargs': {'defend_3bet': True, 'flop_peel': True, 'turn_defend': True}},
+    'v7_probe': {'fallback_kwargs': {'defend_3bet': True, 'flop_peel': True, 'turn_probe': True}},
+    'v7_fast': {'fallback_kwargs': {'defend_3bet': True, 'flop_peel': True, 'turn_defend': True, 'turn_probe': True}},
 }
 
 

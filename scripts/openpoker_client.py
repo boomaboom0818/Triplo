@@ -525,6 +525,12 @@ def main():
     parser.add_argument('--flop-peel', action='store_true',
                         help='v6-fast/v6-tight: call small/medium flop bets more often with draws, pairs and '
                              'heads-up overcards when the fallback would fold')
+    parser.add_argument('--turn-defend', action='store_true',
+                        help='Triplo v7: call more heads-up turn probes (first turn bet from a player who '
+                             'did not bet the flop) with pairs and draws; barrels and rivers unchanged')
+    parser.add_argument('--turn-probe', action='store_true',
+                        help='Triplo v7: bet ~2/3 pot on the turn heads-up after the flop checks through, '
+                             'with draws and most air; skips measured sticky callers')
     parser.add_argument('--river-solver', action=argparse.BooleanOptionalAction, default=None,
                         help='heads-up river solver (v5 default at a 1000-chip buy-in, opt-in at deeper buy-ins)')
     parser.add_argument('--opponent-stats', type=Path,
@@ -560,6 +566,9 @@ def main():
         parser.error(f'--defend-3bet requires --fallback {VERSION_V4} or {VERSION_V5}')
     if args.flop_peel and args.fallback not in (VERSION_V4, VERSION_V5):
         parser.error(f'--flop-peel requires --fallback {VERSION_V4} or {VERSION_V5}')
+    for flag in ('turn_defend', 'turn_probe'):
+        if getattr(args, flag) and args.fallback not in (VERSION_V4, VERSION_V5):
+            parser.error(f'--{flag.replace("_", "-")} requires --fallback {VERSION_V4} or {VERSION_V5}')
     if json.loads(args.checkpoint.read_text()).get('algorithm') in history_cfr.ALGORITHMS:
         saved = history_cfr.load(args.checkpoint)
     else:
@@ -608,11 +617,13 @@ def main():
                 policy.fallback = make_fallback(VERSION_V5, stack_press=args.stack_press,
                                                 solve_river=args.river_solver,
                                                 deep_value=args.deep_value,
-                                                defend_3bet=args.defend_3bet, flop_peel=args.flop_peel)
+                                                defend_3bet=args.defend_3bet, flop_peel=args.flop_peel,
+                                                turn_defend=args.turn_defend, turn_probe=args.turn_probe)
             elif args.fallback == VERSION_V4:
                 policy.fallback = make_fallback(VERSION_V4, stack_press=args.stack_press,
                                                 deep_value=args.deep_value,
-                                                defend_3bet=args.defend_3bet, flop_peel=args.flop_peel)
+                                                defend_3bet=args.defend_3bet, flop_peel=args.flop_peel,
+                                                turn_defend=args.turn_defend, turn_probe=args.turn_probe)
             else:
                 policy.fallback = make_fallback(args.fallback, stack_press=args.stack_press)
         except ModuleNotFoundError as exc:
@@ -620,12 +631,14 @@ def main():
                 raise
             parser.error('--river-solver requires the river-solver extra')
         LOG.info('Fallback: %s (256 deterministic range samples), Stack Press %s, Deep Value %s, River Solver %s, '
-                 'Defend 3-Bet %s, Flop Peel %s, buy-in %d',
+                 'Defend 3-Bet %s, Flop Peel %s, Turn Defend %s, Turn Probe %s, buy-in %d',
                  args.fallback, 'ON' if args.stack_press else 'OFF',
                  'ON' if args.deep_value else 'OFF',
                  'ON' if args.river_solver else 'OFF',
                  'ON' if args.defend_3bet else 'OFF',
-                 'ON' if args.flop_peel else 'OFF', args.buy_in)
+                 'ON' if args.flop_peel else 'OFF',
+                 'ON' if args.turn_defend else 'OFF',
+                 'ON' if args.turn_probe else 'OFF', args.buy_in)
     if args.fallback in (VERSION_V3, VERSION_V4, VERSION_V5) and isinstance(policy, history_cfr.HistoryPolicy):
         try:
             evidence = LatePositionSteals.load(LATE_POSITION_EVIDENCE)
