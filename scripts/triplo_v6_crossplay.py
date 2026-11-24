@@ -1,14 +1,14 @@
-"""Paired 6-max crossplay: Triplo v6 against v4, v5 and v5-fast.
+"""Paired 6-max crossplay: Triplo v6-fast and v6-tight against v4, v5, v5-fast and each other.
 
 Two tests, both on the fast simulator with the guarded history checkpoint:
 
-* duplicate head-to-head: three v6 seats alternate with three seats of the other
-  bot; every deal is replayed with the bots swapped, so cards, seats and stacks
-  cancel.  The table is zero-sum between the two bots, so the v6 result is
-  exactly what the other bot loses (reported per v6 seat, BB/100).
+* duplicate head-to-head: three hero seats (``--hero``, default v6_fast) alternate
+  with three seats of the other bot; every deal is replayed with the bots swapped,
+  so cards, seats and stacks cancel.  The table is zero-sum between the two bots,
+  so the hero result is exactly what the other bot loses (per hero seat, BB/100).
 * substitution: one hero seat among five copies of a field bot (or a mixed
-  v4/v5/v5-fast field).  Every hero (v4, v5, v5-fast, v6) plays the same deals,
-  and v6 is reported as a paired difference against each.
+  v4/v5/v5-fast field).  Every bot plays the same deals, and each v6 variant is
+  reported as a paired difference against each earlier bot.
 
 Each test runs with measured opponent profiles (fitted on a warm-up of mixed
 tables) and cold-start (no profiles), at equal 250 BB stacks and at unequal
@@ -42,7 +42,8 @@ STACK_PROFILES = (
     (35, 100, 150, 250, 500),
 )
 HERO_BB = 250
-BOTS = ('v4', 'v5', 'v5_fast', 'v6')
+BOTS = ('v4', 'v5', 'v5_fast', 'v6_fast', 'v6_tight')
+V6 = ('v6_fast', 'v6_tight')
 RIVALS = ('v4', 'v5', 'v5_fast')
 SUB_FIELDS = {
     '5x_v4': ('v4',) * 5,
@@ -63,12 +64,13 @@ def build(tag, saved):
     if tag == 'v4':  # --fallback equity-guarded-v4
         policy = HistoryPolicy(saved, seed=0, min_visits=64)
         policy.fallback = make_fallback(VERSION_V4)
-    elif tag == 'v5':  # --fallback equity-guarded-v5 --river-solver
+    elif tag in ('v5', 'v6_tight'):  # --fallback equity-guarded-v5 --river-solver
         policy = HistoryPolicy(saved, seed=0, min_visits=64)
-        policy.fallback = make_fallback(VERSION_V5, solve_river=True)
-    elif tag in ('v5_fast', 'v6'):  # + --stack-press --deep-value --no-learned-postflop
+        v6 = tag == 'v6_tight'  # + --defend-3bet --flop-peel
+        policy.fallback = make_fallback(VERSION_V5, solve_river=True, defend_3bet=v6, flop_peel=v6)
+    elif tag in ('v5_fast', 'v6_fast'):  # + --stack-press --deep-value --no-learned-postflop
         policy = HistoryPolicy(saved, seed=0, min_visits=64, learned_postflop=False)
-        v6 = tag == 'v6'  # + --defend-3bet --flop-peel
+        v6 = tag == 'v6_fast'  # + --defend-3bet --flop-peel
         policy.fallback = make_fallback(VERSION_V5, stack_press=True, deep_value=True, solve_river=True,
                                         defend_3bet=v6, flop_peel=v6)
     else:
@@ -134,7 +136,7 @@ def calibrate(saved, hands):
 
 _SAVED = None
 _PROFILES = None
-_HERO = 'v6'
+_HERO = 'v6_fast'
 
 
 def _h2h(task):
@@ -196,8 +198,8 @@ def main():
     parser.add_argument('--warmup', type=int, default=1500)
     parser.add_argument('--workers', type=int, default=10)
     parser.add_argument('--seed', type=int, default=930_000_000)
-    parser.add_argument('--hero', choices=BOTS, default='v6',
-                        help='head-to-head hero (v5_fast gives the control for the v6 comparison)')
+    parser.add_argument('--hero', choices=BOTS, default='v6_fast',
+                        help='head-to-head hero (v5_fast or v5 gives the control for a v6 comparison)')
     parser.add_argument('--tests', nargs='+', choices=('h2h', 'sub'), default=['h2h', 'sub'])
     parser.add_argument('--rivals', nargs='+', choices=BOTS, help='head-to-head rivals (default: every other bot)')
     parser.add_argument('--out', type=Path, required=True)
@@ -223,7 +225,7 @@ def main():
                 report['h2h'][mode][rival] = dict(est(values), per_deal=[round(v, 4) for v in values])
                 print(f'  {mode:17s} {_HERO} vs {rival:8s} {fmt(report["h2h"][mode][rival])}', flush=True)
         if 'sub' in args.tests:
-            print('\n== Substitution: hero seat among a field; v6 minus each hero, paired ==', flush=True)
+            print('\n== Substitution: hero seat among a field; each v6 minus each earlier bot, paired ==', flush=True)
         for m, (mode, unequal, measured) in enumerate(MODES if 'sub' in args.tests else ()):
             report['substitution'][mode] = {}
             for f, field in enumerate(SUB_FIELDS):
@@ -234,11 +236,12 @@ def main():
                     for t in BOTS:
                         merged[t].extend(part[t])
                 row = {t: dict(abs=est(merged[t])) for t in BOTS}
-                for t in RIVALS:
-                    row['v6']['minus_' + t] = est([a - b for a, b in zip(merged['v6'], merged[t])])
+                for v in V6:
+                    for t in RIVALS:
+                        row[v]['minus_' + t] = est([a - b for a, b in zip(merged[v], merged[t])])
+                    diffs = '  '.join(f'-{t}: {fmt(row[v]["minus_" + t])}' for t in RIVALS)
+                    print(f'  {mode:17s} {field:11s} {v:8s} {fmt(row[v]["abs"])} | {diffs}', flush=True)
                 report['substitution'][mode][field] = row
-                diffs = '  '.join(f'-{t}: {fmt(row["v6"]["minus_" + t])}' for t in RIVALS)
-                print(f'  {mode:17s} {field:11s} v6 {fmt(row["v6"]["abs"])} | {diffs}', flush=True)
     report['elapsed_s'] = round(perf_counter() - t0, 1)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(report, indent=2))

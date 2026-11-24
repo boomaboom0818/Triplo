@@ -68,21 +68,31 @@ The switch is set when the client starts and applies throughout the session.
 Eligible decisions log the solver probability, proposed action and baseline
 inside `equity_fallback.river_solver`.
 
-## Triplo v6
+## Triplo v6-fast and v6-tight
 
-v6 is the v5-fast command line plus `--defend-3bet --flop-peel`:
+Both builds add `--defend-3bet --flop-peel`. **v6-fast** (previously just "v6")
+adds them to the v5-fast command line; **v6-tight** adds them to the v5 command
+line (50 BB buy-in, learned postflop, no Stack Press or Deep Value):
 
 ```bash
+# v6-fast
 .venv/bin/python -m scripts.openpoker_client --checkpoint runs/bot/pressure-fresh-001/base-guard.json \
   --min-visits 64 --buy-in 5000 --fallback equity-guarded-v5 --stack-press --deep-value \
   --no-learned-postflop --river-solver --opponent-stats runs/bot/opponent-stats.json \
+  --defend-3bet --flop-peel
+
+# v6-tight
+.venv/bin/python -m scripts.openpoker_client --checkpoint runs/bot/pressure-fresh-001/base-guard.json \
+  --min-visits 64 --buy-in 1000 --fallback equity-guarded-v5 --river-solver \
+  --opponent-stats runs/bot/opponent-stats.json \
   --defend-3bet --flop-peel
 ```
 
 `--defend-3bet` (v4/v5 fallbacks, history checkpoints) defends our opens against
 3-bets by price and position instead of folding every non-premium hand.
-`--flop-peel` (requires `--deep-value`) calls small and medium flop bets more
-often with draws and pairs. Both are off by default. The startup log line shows
+`--flop-peel` (v4/v5 fallbacks) calls small and medium flop bets more often with
+draws and pairs when the fallback would otherwise fold; it works with or without
+`--deep-value`. Both are off by default. The startup log line shows
 `Defend 3-Bet` and `Flop Peel`. Design and evidence: [Triplo v6](TRIPLO-V6.md).
 
 ## Leaving tables when strong opponents sit down (opt-in)

@@ -520,11 +520,11 @@ def main():
     parser.add_argument('--no-learned-postflop', action='store_true',
                         help='v5-fast: use the learned CFR checkpoint preflop only and route all postflop spots to the fallback')
     parser.add_argument('--defend-3bet', action='store_true',
-                        help='v6: price- and position-aware defense after our open is 3-bet (PressureGuard '
+                        help='v6-fast/v6-tight: price- and position-aware defense after our open is 3-bet (PressureGuard '
                              'defers to it instead of folding every non-premium hand)')
     parser.add_argument('--flop-peel', action='store_true',
-                        help='v6 (requires --deep-value): call small/medium flop bets more often with draws, '
-                             'pairs and heads-up overcards')
+                        help='v6-fast/v6-tight: call small/medium flop bets more often with draws, pairs and '
+                             'heads-up overcards when the fallback would fold')
     parser.add_argument('--river-solver', action=argparse.BooleanOptionalAction, default=None,
                         help='heads-up river solver (v5 default at a 1000-chip buy-in, opt-in at deeper buy-ins)')
     parser.add_argument('--opponent-stats', type=Path,
@@ -558,8 +558,8 @@ def main():
         parser.error(f'--deep-value requires --fallback {VERSION_V4} or {VERSION_V5}')
     if args.defend_3bet and args.fallback not in (VERSION_V4, VERSION_V5):
         parser.error(f'--defend-3bet requires --fallback {VERSION_V4} or {VERSION_V5}')
-    if args.flop_peel and not args.deep_value:
-        parser.error('--flop-peel requires --deep-value')
+    if args.flop_peel and args.fallback not in (VERSION_V4, VERSION_V5):
+        parser.error(f'--flop-peel requires --fallback {VERSION_V4} or {VERSION_V5}')
     if json.loads(args.checkpoint.read_text()).get('algorithm') in history_cfr.ALGORITHMS:
         saved = history_cfr.load(args.checkpoint)
     else:

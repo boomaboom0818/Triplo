@@ -1,4 +1,7 @@
-"""Paired 5-field benchmark and HUD metrics for Triplo v5-fast and the v6 ablations (docs/TRIPLO-V6.md).
+"""Paired 5-field benchmark and HUD metrics for Triplo v5/v5-fast and the v6 ablations (docs/TRIPLO-V6.md).
+
+The first arm is the baseline every delta is paired against: ``v5_fast_base`` for the
+v6-fast ablations, ``v5_base`` for v6-tight (``--arms v5_base v6_tight``).
 
 Needs the cached playable checkpoint (CHECKPOINT_CACHE) and, for the turbo field,
 the offline Triplo Turbo bridge binary (BRIDGE_PATH).
@@ -500,8 +503,12 @@ def play_one_hand(policy, seed, hero, stacks, tags, proc, profiles_map, track_hu
 
 
 def build_policy(saved, arm_cfg):
-    policy = HistoryPolicy(saved, seed=0, min_visits=64, learned_postflop=False)
-    fb_kwargs = dict(stack_press=True, deep_value=True, solve_river=True)
+    if arm_cfg.get('base') == 'v5':  # --fallback equity-guarded-v5 --river-solver
+        policy = HistoryPolicy(saved, seed=0, min_visits=64)
+        fb_kwargs = dict(solve_river=True)
+    else:  # v5-fast: + --stack-press --deep-value --no-learned-postflop
+        policy = HistoryPolicy(saved, seed=0, min_visits=64, learned_postflop=False)
+        fb_kwargs = dict(stack_press=True, deep_value=True, solve_river=True)
     fb_kwargs.update(arm_cfg.get('fallback_kwargs', {}))
     policy.fallback = make_fallback(VERSION_V5, **fb_kwargs)
     return policy
@@ -647,7 +654,10 @@ def run_eval(arms, fields, deals, workers, seed_base, profiles, cold_start=False
 
 
 ARM_PRESETS = {
+    'v5_base': {'base': 'v5'},
+    'v6_tight': {'base': 'v5', 'fallback_kwargs': {'defend_3bet': True, 'flop_peel': True}},
     'v5_fast_base': {},
+    'v6_fast': {'fallback_kwargs': {'defend_3bet': True, 'flop_peel': True}},
     'fix1_3bet': {'fallback_kwargs': {'defend_3bet': True}},
     'fix2_peel': {'fallback_kwargs': {'flop_peel': True}},
     'fix3_draws': {'fallback_kwargs': {'semi_bluff': 'draws'}},
