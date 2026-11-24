@@ -24,6 +24,7 @@ class OpponentRating:
     results_bb100: float | None  # prior-shrunk season rate, uncapped
     kind: str | None             # 'no_code', 'self_hosted' or 'unknown'
     owner: str | None
+    balance: int | None = None   # off-table chip_balance from leaderboard
 
     @classmethod
     def from_row(cls, row):
@@ -33,13 +34,13 @@ class OpponentRating:
         hands = row.get('hands_played')
         hands = hands if type(hands) is int and hands >= 0 else None
         values = [row.get(k) for k in ('chip_balance', 'chips_at_table', 'rebuys')]
-        net = rate = None
+        net = rate = balance = None
         if all(type(v) is int and v >= 0 for v in values):
             balance, at_table, rebuys = values
             net = balance + at_table - STARTING_CHIPS - rebuys * REBUY_CHIPS
             if hands is not None and hands >= MIN_HANDS:
                 rate = 100 * net / (BIG_BLIND * (hands + PRIOR_HANDS))
-        return cls(name, hands, net, rate, row.get('bot_kind'), row.get('account_agent_id'))
+        return cls(name, hands, net, rate, row.get('bot_kind'), row.get('account_agent_id'), balance)
 
 
 @dataclass(frozen=True)

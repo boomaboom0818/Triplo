@@ -140,8 +140,14 @@ class StrongAvoider:
         cooldown = 0 if not self.leaves else min(COOLDOWN_CAP, COOLDOWN * 2 ** (self.leaves - 1))
         if now - self.last_leave < cooldown:
             return dict(detail, reason='cooldown', cooldown_s=cooldown)
-        # Leaving must return enough chips to fund the next join_lobby.
-        if type(self.hero_stack) is not int or self.hero_stack < buy_in:
+        # Leaving must be able to fund the next join_lobby, either from the
+        # returned table stack or from an off-table bankroll with a 2x safety
+        # margin (since leaderboard chip_balance can lag up to MAX_AGE_SECONDS).
+        hero_rating = self.field.players.get(self.hero)
+        balance = hero_rating.balance if hero_rating and type(hero_rating.balance) is int else 0
+        stack_covers = type(self.hero_stack) is int and self.hero_stack >= buy_in
+        bankroll_covers = type(self.hero_stack) is int and balance >= 2 * buy_in
+        if not stack_covers and not bankroll_covers:
             return dict(detail, reason='buy-in not covered by stack')
         return dict(detail, leave=True)
 
