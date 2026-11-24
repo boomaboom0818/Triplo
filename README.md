@@ -118,6 +118,12 @@ python scripts/openpoker_client.py --checkpoint runs/bot/pressure-fresh-001/base
   --min-visits 64 --fallback equity-guarded-v4 --opponent-stats runs/bot/opponent-stats.json
 ```
 
+**Triplo v6** adds `--defend-3bet --flop-peel` to the v5-fast command line
+(`equity-guarded-v5 --stack-press --deep-value --no-learned-postflop --river-solver`
+at a 5,000-chip buy-in). It defends opens against 3-bets and calls small flop
+bets more often. See [Triplo v6](docs/TRIPLO-V6.md) for the command, design and
+simulation results.
+
 **`base-guard.json` is now the 2,001,520-iteration model** (2026-11-22), which replaced the
 969,520-iteration model after longer training improved it by +6.7 bb/100 [+1.1, +12.3] on a
 fresh confirmation seed (+10.1 on the development seed). The old model is kept as

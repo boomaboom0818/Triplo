@@ -519,6 +519,12 @@ def main():
                         help='v5-fast: expanded postflop value sizing menu at all depths and sticky top-pair value raises')
     parser.add_argument('--no-learned-postflop', action='store_true',
                         help='v5-fast: use the learned CFR checkpoint preflop only and route all postflop spots to the fallback')
+    parser.add_argument('--defend-3bet', action='store_true',
+                        help='v6: price- and position-aware defense after our open is 3-bet (PressureGuard '
+                             'defers to it instead of folding every non-premium hand)')
+    parser.add_argument('--flop-peel', action='store_true',
+                        help='v6 (requires --deep-value): call small/medium flop bets more often with draws, '
+                             'pairs and heads-up overcards')
     parser.add_argument('--river-solver', action=argparse.BooleanOptionalAction, default=None,
                         help='heads-up river solver (v5 default at a 1000-chip buy-in, opt-in at deeper buy-ins)')
     parser.add_argument('--opponent-stats', type=Path,
@@ -550,6 +556,10 @@ def main():
         parser.error('--max-strong requires --avoid-strong report or leave')
     if args.deep_value and args.fallback not in (VERSION_V4, VERSION_V5):
         parser.error(f'--deep-value requires --fallback {VERSION_V4} or {VERSION_V5}')
+    if args.defend_3bet and args.fallback not in (VERSION_V4, VERSION_V5):
+        parser.error(f'--defend-3bet requires --fallback {VERSION_V4} or {VERSION_V5}')
+    if args.flop_peel and not args.deep_value:
+        parser.error('--flop-peel requires --deep-value')
     if json.loads(args.checkpoint.read_text()).get('algorithm') in history_cfr.ALGORITHMS:
         saved = history_cfr.load(args.checkpoint)
     else:
@@ -587,6 +597,8 @@ def main():
     if args.fallback in FALLBACKS:
         if (args.fallback == VERSION_V5 or args.river_solver) and not isinstance(policy, history_cfr.HistoryPolicy):
             parser.error('v5 and --river-solver require a history checkpoint for verified replay')
+        if args.defend_3bet and not isinstance(policy, history_cfr.HistoryPolicy):
+            parser.error('--defend-3bet requires a history checkpoint')
         if not hasattr(policy, 'fallback'):
             parser.error('equity fallbacks require a history or lean checkpoint')
         if args.stack_press and not args.fallback.startswith('equity-guarded'):
@@ -595,20 +607,25 @@ def main():
             if args.fallback == VERSION_V5 or args.river_solver:
                 policy.fallback = make_fallback(VERSION_V5, stack_press=args.stack_press,
                                                 solve_river=args.river_solver,
-                                                deep_value=args.deep_value)
+                                                deep_value=args.deep_value,
+                                                defend_3bet=args.defend_3bet, flop_peel=args.flop_peel)
             elif args.fallback == VERSION_V4:
                 policy.fallback = make_fallback(VERSION_V4, stack_press=args.stack_press,
-                                                deep_value=args.deep_value)
+                                                deep_value=args.deep_value,
+                                                defend_3bet=args.defend_3bet, flop_peel=args.flop_peel)
             else:
                 policy.fallback = make_fallback(args.fallback, stack_press=args.stack_press)
         except ModuleNotFoundError as exc:
             if exc.name != 'numpy':
                 raise
             parser.error('--river-solver requires the river-solver extra')
-        LOG.info('Fallback: %s (256 deterministic range samples), Stack Press %s, Deep Value %s, River Solver %s, buy-in %d',
+        LOG.info('Fallback: %s (256 deterministic range samples), Stack Press %s, Deep Value %s, River Solver %s, '
+                 'Defend 3-Bet %s, Flop Peel %s, buy-in %d',
                  args.fallback, 'ON' if args.stack_press else 'OFF',
                  'ON' if args.deep_value else 'OFF',
-                 'ON' if args.river_solver else 'OFF', args.buy_in)
+                 'ON' if args.river_solver else 'OFF',
+                 'ON' if args.defend_3bet else 'OFF',
+                 'ON' if args.flop_peel else 'OFF', args.buy_in)
     if args.fallback in (VERSION_V3, VERSION_V4, VERSION_V5) and isinstance(policy, history_cfr.HistoryPolicy):
         try:
             evidence = LatePositionSteals.load(LATE_POSITION_EVIDENCE)

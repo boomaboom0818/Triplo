@@ -454,7 +454,10 @@ class HistoryPolicy:
                     self.safeguards += 1
                     return 'call'
                 if self.pressure_guard is not None:
-                    guarded = self.pressure_guard.act(o, action)
+                    if not o.street and getattr(self.fallback, 'defend_3bet', False):
+                        guarded = self.pressure_guard.act(o, action, fallback=self.fallback)
+                    else:
+                        guarded = self.pressure_guard.act(o, action)
                     if guarded != action:
                         self.pressure_overrides += 1
                         return guarded
