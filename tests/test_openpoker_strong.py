@@ -60,7 +60,14 @@ def test_gates_and_backoff():
     found = a.check('player_joined', 2000)
     assert found['leave'] and found['strong'] == ['shark'] and found['trigger'] == 'player_joined'
     a.hero_stack = 1999
+    # With 90,000 off-table balance (>= 2x buy-in), hero can still leave and rebuy
+    assert a.check('hand_result', 2000)['leave']
+    # With a low off-table balance (< 2x buy-in), hero must wait until stack covers buy-in
+    low_field = OpponentField([row('hero', 3000, account_agent_id='ours'),
+                               row('shark', 90000), row('reg', 18000)])
+    a.field = low_field
     assert a.check('hand_result', 2000)['reason'] == 'buy-in not covered by stack'
+    a.field = field()
     a.hero_stack = 2000
     a.field_time -= 61
     assert a.check('hand_result', 2000) is None  # stale leaderboard: never act
