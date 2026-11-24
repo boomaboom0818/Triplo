@@ -111,18 +111,17 @@ zero-sum equilibrium guarantees. No heads-up metric establishes multiplayer stre
 
 ## Deployment setups
 
-**Frontier setup: Guarded + `equity-guarded-v4`.** This is what runs live on OpenPoker:
+**Frontier setup: Triplo v6.** This is what runs live on OpenPoker (requires the `openpoker` and `river-solver` extras):
 
-```
-python scripts/openpoker_client.py --checkpoint runs/bot/pressure-fresh-001/base-guard.json \
-  --min-visits 64 --fallback equity-guarded-v4 --opponent-stats runs/bot/opponent-stats.json
+```sh
+python -m scripts.openpoker_client --checkpoint runs/bot/pressure-fresh-001/base-guard.json \
+  --min-visits 64 --buy-in 5000 --auto-rebuy --fallback equity-guarded-v5 \
+  --stack-press --deep-value --no-learned-postflop --river-solver \
+  --defend-3bet --flop-peel --opponent-stats runs/bot/opponent-stats.json \
+  --avoid-strong leave --strong-bb100 220 --min-weak 2 --max-strong 1 --idle-timeout 300
 ```
 
-**Triplo v6** adds `--defend-3bet --flop-peel` to the v5-fast command line
-(`equity-guarded-v5 --stack-press --deep-value --no-learned-postflop --river-solver`
-at a 5,000-chip buy-in). It defends opens against 3-bets and calls small flop
-bets more often. See [Triplo v6](docs/TRIPLO-V6.md) for the command, design and
-simulation results.
+**Triplo v6** builds on **v5-fast** by adding `--defend-3bet --flop-peel` to defend opens against 3-bets and peel small/medium flop bets with draws and pairs. Dropping those two flags gives **v5-fast** verbatim; dropping `--stack-press --deep-value --no-learned-postflop` and using `--buy-in 1000` gives baseline **v5**. See [Triplo v6](docs/TRIPLO-V6.md) and [OpenPoker client setup](docs/openpoker.md) for full details and benchmarks.
 
 **`base-guard.json` is now the 2,001,520-iteration model** (2026-11-22), which replaced the
 969,520-iteration model after longer training improved it by +6.7 bb/100 [+1.1, +12.3] on a
@@ -130,7 +129,7 @@ fresh confirmation seed (+10.1 on the development seed). The old model is kept a
 `base-guard-969520.json`. Weights are not committed; see
 [Scale-001 results](docs/SCALE-001-RESULTS.md) to rebuild the model and for the results.
 
-**Late-Position Steals is built into `equity-guarded-v3` and `equity-guarded-v4` for history checkpoints.**
+**Late-Position Steals is built into `equity-guarded-v3` through `equity-guarded-v5` for history checkpoints.**
 The client automatically reads `runs/bot/late-position-folds.json` at startup.
 It can turn a fold into a 2.5 BB open from the cutoff, button, or small blind
 only with qualifying fold evidence for the exact remaining lineup. If the file
@@ -140,22 +139,25 @@ the [OpenPoker client setup](docs/openpoker.md),
 [Triplo v4](docs/TRIPLO-V4.md), and the
 [Late-Position Steals fitting guide](docs/LATE-POSITION-STEALS.md).
 
-A deployment is three independent choices: the **model** (`--checkpoint`), an optional
-**PressureGuard** baked into that checkpoint, and the **fallback** (`--fallback`) that
-plays states the model has not learned. **Stack Press** (`--stack-press`) is an extra
-opt-in switch on the guarded fallback. The table client takes them as
-`--checkpoint <file> --min-visits 64 --fallback <fallback> [--opponent-stats <file>] [--stack-press]`.
+A deployment combines the **model** (`--checkpoint`), an optional
+**PressureGuard** baked into that checkpoint, the **fallback** (`--fallback`) that
+plays states the model does not cover, and opt-in switches (`--buy-in`, `--stack-press`,
+`--deep-value`, `--no-learned-postflop`, `--river-solver`, `--defend-3bet`, `--flop-peel`,
+and `--avoid-strong`).
 
-| Setup | Checkpoint | Fallback | Good for | Watch out for |
+| Setup | Checkpoint | Fallback & key flags | Good for | Watch out for |
 |---|---|---|---|---|
+| **Triplo v6** (frontier, current live default) | `runs/bot/pressure-fresh-001/base-guard.json` | `equity-guarded-v5` + `--buy-in 5000 --stack-press --deep-value --no-learned-postflop --river-solver --defend-3bet --flop-peel` + `--opponent-stats` | Mixed OpenPoker tables with both calling-station presets and HUD-driven regulars. Closes v5-fast's fold-to-3bet (~89% → ~55–65%) and flop fold-to-cbet (49% → 34%) leaks while keeping 250 BB preset extraction. In 4,096-deal paired screens over v5-fast: +29.3 [+5.3, +53.2] BB/100 in `real_mix`, +40.0 [+13.3, +66.7] in `pressure`, +7.9 [+1.9, +13.9] head-to-head vs v5-fast (`docs/TRIPLO-V6.md`). | Moves some flop folds to the turn (a double-barreling shark can still test turn folds); carries v5-fast's unequal-stack drag vs v4 (−8.5 [−15.3, −1.8] in crossplay). Drop `--defend-3bet --flop-peel` to roll back to v5-fast. |
+| **Triplo v5-fast** (previous frontier) | `runs/bot/pressure-fresh-001/base-guard.json` | `equity-guarded-v5` + `--buy-in 5000 --stack-press --deep-value --no-learned-postflop --river-solver` + `--opponent-stats` (+ `--avoid-strong leave --strong-bb100 220 --min-weak 2 --max-strong 1`) | Maximizing chip rate on soft/mixed fields. Keeps the 2M-iteration learned policy preflop, routes all postflop play to the guarded fallback + river solver (cutting postflop air/weak-pair bluff spew), and unlocks `0.75×/1.5×/2×/half-stack/cover` value sizing at all depths plus sticky top-pair value raises. In 10,240 paired deals vs v5 @ 50 BB: +3,917 vs +1,082 on `sticky`, +1,928 vs +486 on `mixed`, +458 vs +157 on `real_mix`, and +27.7 vs −4.1 vs 5× Turbo. | Higher 250 BB swing variance than 50 BB v5; without v6's `--defend-3bet --flop-peel`, HUD sharks can exploit its ~89% fold-to-3bet and ~57% flop fold-to-cbet. |
+| **Triplo v5** | `runs/bot/pressure-fresh-001/base-guard.json` | `equity-guarded-v5` (defaults to `--buy-in 1000` / 50 BB with `--river-solver` ON) + `--opponent-stats` | Lower-variance short-stack play and tougher heads-up rivers. Adds the calibrated heads-up river subgame solver (`poker/calibrated_river_solver.py`) on verified fallback river spots; at 50 BB the solver added +4.66 [+0.87, +8.44] BB/100 vs 5× Turbo (`runs/bot/buyin-river-factorial-001`). Requires `.[openpoker,river-solver]`. | The 50 BB default buy-in caps chip rate on caller-heavy tables (~2–3× slower than 250 BB). Pass `--buy-in 2500` or `--buy-in 5000` with `--river-solver` for deeper games. |
+| **Guarded + `equity-guarded-v4`** (previous frontier) | `runs/bot/pressure-fresh-001/base-guard.json` (2,001,520-iteration model + PressureGuard v1 since 2026-11-22) | `equity-guarded-v4` + `--opponent-stats runs/bot/opponent-stats.json` | Every field, without the optional `numpy`/`river-solver` dependency. Keeps every preflop and heads-up `v3` decision verbatim, and scales multiway postflop betting thresholds by fair-share equity `1 / (opponents + 1)` (using half-pot when newly unlocked below 0.40 usable equity). Untouched 16-scenario holdout (~132,000 hands): +6.21 ± 2.79 BB/100 aggregate, 3 significant wins, 0/16 significant regressions (`docs/TRIPLO-V4.md`). | Multiway simulation gains are strongest against loose/passive fields; without `--stack-press` / `--deep-value`, postflop raises stay capped at 1× pot. |
+| **Guarded + `equity-guarded-v3`** | `runs/bot/pressure-fresh-001/base-guard.json` | `equity-guarded-v3` + `--opponent-stats runs/bot/opponent-stats.json` | Every field. All of v2's rules, with opponent ranges calibrated on 5,447 real OpenPoker showdown hands (`poker/range_calibration.py`): one multiplier per hand class for each postflop line (bet/raise, call, check). Predicts real holdings better than v2's hand-set weights on held-out hands (log-loss 1.127 vs 1.233). | Uses a flat 0.40 multiway postflop threshold that under-bets top pair and strong favorites in 3–6 player pots. |
+| **Guarded + `equity-guarded-v2`** | `runs/bot/pressure-fresh-001/base-guard.json` | `equity-guarded-v2` + `--opponent-stats runs/bot/opponent-stats.json` | Every field. Keeps all of Guarded, and adds call pricing that splits main and side pots by who can win each, plus bet sizing from each opponent's measured postflop calling stats. Sizing adapts to a player only after they have faced 20 postflop bets; until then it keeps v1's size. | Against five copies of Guarded in duplicate play it was even (about +0.2 ± 0.5 bb/100, no table type worse, `runs/bot/h2h-002`); its edge is expected against sticky callers, which simulation cannot supply, so confirm it with live results. Needs `--opponent-stats`, or bet sizing stays at v1's. |
+| **Guarded** | `runs/bot/pressure-fresh-001/base-guard-969520.json` (stage-10 model + PressureGuard v1; was `base-guard.json` until 2026-11-22) | `equity-guarded-v1` | Mixed, tight and aggressive fields, and short or medium stacks. Best simulated average (58.2 bb/100, +11 over Classic) and +38 to +45 bb/100 against tight/aggressive 100 BB tables. | Fell from +32 to about -19 bb/100 against copies of the Classic model. That gap is not statistically significant but appeared in every guarded setup. |
+| **Guarded with PressureGuard v2** | `runs/bot/pressure-fresh-001/stage-10-pressure-guard-v2.json` or `history-sustained-001-pressure-guard-v2.json` | `equity-guarded-v1` | Same niche as Guarded; v2 adds the JJ/QQ 100 BB cap, river-overbet fold and reraise limit inside the guard. Statistically tied with Guarded. | Not in the full nine-table screen for the stage-10 model. |
 | **Classic** (the original baseline) | `runs/bot/history-sustained-001/checkpoint.json` | `equity-v1` | Fields of strong trained bots: it was the only setup that beat copies of itself (+32 bb/100 in simulation). | Loses to tight and aggressive rule-style players at 100 BB (about -10 and -17 bb/100). Can call off huge pots with one pair or JJ/QQ. |
 | **Classic + guarded fallback** | same | `equity-guarded-v1` | Same as Classic with the one-pair and JJ/QQ disasters removed. | Statistically no different from Classic in simulation (0.0 bb/100); the model plays most hands. |
-| **Guarded** (previous default) | `runs/bot/pressure-fresh-001/base-guard-969520.json` (stage-10 model + PressureGuard v1; was `base-guard.json` until 2026-11-22) | `equity-guarded-v1` | Mixed, tight and aggressive fields, and short or medium stacks. Best simulated average (58.2 bb/100, +11 over Classic) and +38 to +45 bb/100 against tight/aggressive 100 BB tables. | Fell from +32 to about -19 bb/100 against copies of the Classic model. That gap is not statistically significant but appeared in every guarded setup. |
-| **Guarded with PressureGuard v2** | `runs/bot/pressure-fresh-001/stage-10-pressure-guard-v2.json` or `history-sustained-001-pressure-guard-v2.json` | `equity-guarded-v1` | Same niche as Guarded; v2 adds the JJ/QQ 100 BB cap, river-overbet fold and reraise limit inside the guard. Statistically tied with Guarded. | Not in the full nine-table screen for the stage-10 model. |
-| **Guarded + `equity-guarded-v4`** (frontier, recommended default) | `runs/bot/pressure-fresh-001/base-guard.json` (2,001,520-iteration model + PressureGuard v1 since 2026-11-22) | `equity-guarded-v4` + `--opponent-stats runs/bot/opponent-stats.json` | Every field. Keeps every preflop and heads-up `v3` decision verbatim, and scales multiway postflop betting thresholds by fair-share equity `1 / (opponents + 1)` (using half-pot when newly unlocked below 0.40 usable equity). Untouched 16-scenario holdout (~132,000 hands): +6.21 ± 2.79 BB/100 aggregate, 3 significant wins, 0/16 significant regressions (`docs/TRIPLO-V4.md`). | Multiway simulation gains are strongest against loose/passive fields; confirm long-run live results and roll back to `--fallback equity-guarded-v3` if needed. |
-| **Guarded + `equity-guarded-v3`** (previous frontier) | `runs/bot/pressure-fresh-001/base-guard.json` | `equity-guarded-v3` + `--opponent-stats runs/bot/opponent-stats.json` | Every field. All of v2's rules, with opponent ranges calibrated on 5,447 real OpenPoker showdown hands (`poker/range_calibration.py`): one multiplier per hand class for each postflop line (bet/raise, call, check). Predicts real holdings better than v2's hand-set weights on held-out hands (log-loss 1.127 vs 1.233). | Uses a flat 0.40 multiway postflop threshold that under-bets top pair and strong favorites in 3–6 player pots. |
-| **Guarded + `equity-guarded-v2`** (previous default) | `runs/bot/pressure-fresh-001/base-guard.json` | `equity-guarded-v2` + `--opponent-stats runs/bot/opponent-stats.json` | Every field. Keeps all of Guarded, and adds call pricing that splits main and side pots by who can win each, plus bet sizing from each opponent's measured postflop calling stats. Sizing adapts to a player only after they have faced 20 postflop bets; until then it keeps v1's size. | Against five copies of Guarded in duplicate play it was even (about +0.2 ± 0.5 bb/100, no table type worse, `runs/bot/h2h-002`); its edge is expected against sticky callers, which simulation cannot supply, so confirm it with live results. Needs `--opponent-stats`, or bet sizing stays at v1's. |
-| **Any of the above + Stack Press** | any | `equity-guarded-v1` + `--stack-press` | Weak or loose fields (calling stations, over-callers) and deep stacks. In duplicate self-play it added +47 bb/100 at 100 BB and +117 bb/100 at 200 BB against rule bots. | Strictly more risk when you are beaten. No gain against an equal-strength field (0.0 bb/100) and untested against strong bots. Turn it off in tight, competitive games. |
+| **Any guarded setup + Stack Press** | any | `equity-guarded-v1..v5` + `--stack-press` | Weak or loose fields (calling stations, over-callers) and deep stacks (> 100 BB). In duplicate self-play it added +47 bb/100 at 100 BB and +117 bb/100 at 200 BB against rule bots. | Strictly more risk when you are beaten. No gain against an equal-strength field (0.0 bb/100). Turn it off in tight, competitive games. |
 
 All lean-menu setups now offer the *effective* all-in: a raise to the deepest live
 opponent's total, so a deep stack can still put a short stack all in (it was offered
@@ -167,12 +169,15 @@ showdowns with `scripts.range_sim_lines` and `scripts.range_fit`; `scripts.range
 compares real holdings by line with the model. `scripts.h2h_live` replays the same deals
 with a candidate in one seat against the deployed setup.
 
-Choosing quickly: by default run the **frontier** setup (Guarded + `equity-guarded-v4`
-with `--opponent-stats`) without Stack Press; clearly soft table, add `--stack-press`;
-to roll back multiway fair-share scaling, switch `--fallback` to `equity-guarded-v3`,
-or to `equity-guarded-v2` / `equity-guarded-v1` (**Guarded**) for earlier fallbacks;
-strong-bot table or if Guarded loses to trained-bot opponents, fall back to **Classic**. `--stack-press` only works with
-an `equity-guarded` fallback; the client logs `Stack Press ON` or `OFF` at startup.
+Choosing quickly: by default run **Triplo v6** (the frontier command above, with
+`--opponent-stats` and `--avoid-strong leave --strong-bb100 220 --min-weak 2 --max-strong 1`);
+to roll back v6's 3-bet defense and flop peel, drop `--defend-3bet --flop-peel` (**v5-fast**);
+for lower variance on tougher tables, drop `--stack-press --deep-value --no-learned-postflop` and
+buy in at `--buy-in 1000` or `2500` (**v5**); without the `river-solver` extra, use
+`--fallback equity-guarded-v4` (**v4**) or earlier `v3`/`v2`/`v1` fallbacks; on a pure
+trained-bot table where Guarded underperforms, fall back to **Classic**. Startup logs confirm
+each active switch (`Stack Press`, `Deep Value`, `River Solver`, `Defend 3-Bet`, `Flop Peel`,
+and `learned_postflop`).
 
 Evidence and limits: these figures come from simulated tables (`runs/bot/deploy-combo-001`
 for model/guard/fallback combinations, `runs/bot/selfplay-ab-001` for Stack Press,
