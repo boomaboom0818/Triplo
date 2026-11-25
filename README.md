@@ -111,6 +111,13 @@ zero-sum equilibrium guarantees. No heads-up metric establishes multiplayer stre
 
 ## Deployment setups
 
+**Triplo v8-fast** (live trial) is v7-fast plus `--fish-exploit`, run with `--min-weak 3`: against
+seats the leaderboard marks weak (OpenPoker's `no_code` presets and losing bots) it isolates their
+opens, bets bigger for value and re-raises their flop/turn raises with top pair or better, and it
+leaves tables with fewer than three such seats. Simulated against a fish model fitted to 88,671 live
+`no_code` decisions it adds +8 to +64 BB/100 depending on the table, about +35 BB/100 overall with
+the table rule. See [Triplo v8](docs/TRIPLO-V8.md).
+
 **Frontier setup: Triplo v7-fast** (released as "v7"). This is what runs live on OpenPoker (requires the `openpoker` and `river-solver` extras):
 
 ```sh
