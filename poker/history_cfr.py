@@ -418,6 +418,11 @@ class HistoryPolicy:
         self.decisions = self.covered = self.safeguards = self.thin = 0
         self.pressure_guard = None
         self.pressure_overrides = 0
+        # Triplo v9 --open-translation (None = off, v8 behaviour);
+        # dict(max_open=chips or None, fish_only=bool: only opens by leaderboard-weak seats,
+        #      keep=None or a tuple of 'fold'/'call'/'raise': other translated actions go to the rules).
+        self.open_translation = None
+        self.translated = 0
         if saved.get('decision_guard') is not None:
             from .equity_policy import PressureGuard
             self.pressure_guard = PressureGuard(saved['decision_guard'])
@@ -464,5 +469,37 @@ class HistoryPolicy:
                 self.covered += 1
                 return action
             self.thin += 1
+        if self.open_translation is not None and self.learned and history_present and not o.street:
+            action = self._translated(o)
+            if action is not None:
+                return action
         return self.fallback.act(o)
+
+    def _translated(self, o):
+        """Triplo v9 --open-translation: answer an off-menu open from the nearest trained spot."""
+        from .open_translation import back, translate
+        t = translate(o, max_open=self.open_translation.get('max_open'))
+        if t is None:
+            return None
+        if self.open_translation.get('fish_only'):
+            opener = next(h[1] for h in o.history if isinstance(h[3], int))
+            if opener not in (getattr(self.fallback, 'fish_seats', None) or ()):
+                return None
+        key = self.key(t)
+        row = self.sums.get(key)
+        if not (row and len(row) == len(t.legal) and sum(row) > 0 and self.visits.get(key, 0) >= self.min_visits):
+            return None
+        action = back(self.rng.choices(t.legal, row)[0], t, o)
+        if action is None:
+            return None
+        keep = self.open_translation.get('keep')
+        if keep is not None and ('raise' if isinstance(action, int) else action) not in keep:
+            return None                     # e.g. keep=('raise',): translated 3-bets only
+        if self.pressure_guard is not None:
+            if getattr(self.fallback, 'defend_3bet', False):
+                action = self.pressure_guard.act(o, action, fallback=self.fallback)
+            else:
+                action = self.pressure_guard.act(o, action)
+        self.translated += 1
+        return action
 

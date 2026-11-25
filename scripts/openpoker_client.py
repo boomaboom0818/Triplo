@@ -122,6 +122,7 @@ def decision(snapshot, policy, public_history=(), history_complete=None):
         from poker.equity_policy import GuardedEquityPolicy
         profiles = opponent_profiles(policy.fallback, seats, pad, position)
         fish_before = getattr(policy, 'overrides', 0)
+        translated_before = getattr(policy, 'translated', 0)
         if isinstance(policy.fallback, GuardedEquityPolicy) and history_complete is not True:
             observation = replace(observation, history=())
         if isinstance(core_policy(policy), history_cfr.HistoryPolicy):
@@ -135,6 +136,8 @@ def decision(snapshot, policy, public_history=(), history_complete=None):
             source = 'poker_safeguard'
         elif getattr(policy, 'pressure_overrides', 0) > overrides_before:
             source = 'pressure_guard'
+        elif getattr(policy, 'translated', 0) > translated_before:
+            source = 'open_translation'
         elif not covered:
             from poker.equity_policy import EquityPolicy
             source = ('preflop_rules' if not street else 'equity_fallback') if isinstance(policy.fallback, EquityPolicy) else 'rule_fallback'
@@ -551,6 +554,10 @@ def main():
                         help='Triplo v8: against seats the leaderboard marks weak (no_code presets, losing bots): '
                              'isolate their opens preflop, bet bigger for value and re-raise their flop/turn raises '
                              'with top pair+; requires --avoid-strong and the v5 fallback')
+    parser.add_argument('--open-translation', type=float, metavar='MAX_BB', default=None,
+                        help='Triplo v9 (research, not deployed): answer the first decision facing one open '
+                             'bigger than the trained 2.5 BB from the learned tree as if it were 2.5 BB, for '
+                             'opens up to MAX_BB (0 = any size); history checkpoints only, default off')
     parser.add_argument('--turn-defend', action='store_true',
                         help='Triplo v7: call more heads-up turn probes (first turn bet from a player who '
                              'did not bet the flop) with pairs and draws; barrels and rivers unchanged')
@@ -599,6 +606,8 @@ def main():
     for flag in ('turn_defend', 'turn_probe'):
         if getattr(args, flag) and args.fallback not in (VERSION_V4, VERSION_V5):
             parser.error(f'--{flag.replace("_", "-")} requires --fallback {VERSION_V4} or {VERSION_V5}')
+    if args.open_translation is not None and args.open_translation < 0:
+        parser.error('--open-translation needs MAX_BB >= 0 (0 = any size)')
     if json.loads(args.checkpoint.read_text()).get('algorithm') in history_cfr.ALGORITHMS:
         saved = history_cfr.load(args.checkpoint)
     else:
@@ -622,6 +631,13 @@ def main():
                  args.min_visits, 'OFF' if args.no_learned_postflop else 'ON')
         if policy.pressure_guard is not None:
             LOG.info('Decision guard: %s', policy.pressure_guard.version)
+        if args.open_translation is not None:
+            policy.open_translation = dict(
+                max_open=int(round(2 * args.open_translation)) if args.open_translation else None)
+            LOG.info('Open Translation: ON (opens up to %s)',
+                     f'{args.open_translation:g} BB' if args.open_translation else 'any size')
+    elif args.open_translation is not None:
+        parser.error('--open-translation requires a history checkpoint')
     elif saved['abstraction'] == lean_cfr.VERSION:
         if args.no_learned_postflop:
             parser.error('--no-learned-postflop requires a history checkpoint')

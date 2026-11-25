@@ -129,6 +129,16 @@ leaves tables with fewer than three such seats. Simulated against a fish model f
 the table rule. Live confirmation needs roughly 10,000 hands. Dropping `--fish-exploit` and setting
 `--min-weak 2` gives **v7-fast**. See [Triplo v8](docs/TRIPLO-V8.md).
 
+**Triplo v9** (research, not deployed; live stays v8-fast) targets a defensive leak in v8-fast: live,
+it folds 54% to opens of 2.5 BB or less but 71% to 3 BB, 92% to 3.5-4 BB and 97% above 4 BB, almost
+all through `preflop_rules`, because the learned tree has never seen an open bigger than 2.5 BB.
+`--open-translation MAX_BB` (default off, decision-identical to v8 when off) answers those spots
+from the learned tree as if the open were 2.5 BB. Against simulated fish and big-opening
+regulars fitted to the live log it did not beat v8 on fresh deals (3 BB opens only: +0.9 BB/100
+[-1.7, +3.4] on 49,152 deals per table; all sizes: no gain, and it loses to value-sized 4 BB opens), so it is not
+used. v9 also adds a capped and uncapped A/B report (`scripts/ab_report.py`) for live tracking.
+See [Triplo v9](docs/TRIPLO-V9.md).
+
 **Triplo v7-fast** adds `--turn-defend` to v6-fast: heads-up, it calls a first turn bet from a player who
 did not bet the flop with pairs and draws instead of folding them. Live v6 folded 79% to these turn
 stabs. Dropping `--turn-defend` gives **v6-fast**. `--turn-probe` (turn bets after a checked flop) is
