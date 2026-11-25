@@ -58,6 +58,13 @@ class OpponentField:
             player = OpponentRating.from_row(row)
             self.players.setdefault(player.name, player)  # moving leaderboard pages can overlap
 
+    def is_weak(self, name, threshold=STRONG_BB100):
+        """A no_code preset or a clearly losing rated bot (the seats strong_check counts as weak)."""
+        p = self.players.get(name)
+        if p is None or (p.results_bb100 is not None and p.results_bb100 >= threshold):
+            return False
+        return p.kind == 'no_code' or (p.results_bb100 is not None and p.results_bb100 <= WEAK_BB100)
+
     def strong_check(self, hero, opponents, threshold=STRONG_BB100, min_weak=0, max_strong=None):
         """Leave when strong opponents outnumber weak seats, exceed max_strong, or a full table has too few weak seats.
 

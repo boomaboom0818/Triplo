@@ -121,14 +121,17 @@ def decision(snapshot, policy, public_history=(), history_complete=None):
             policy.fallback.last = None
         from poker.equity_policy import GuardedEquityPolicy
         profiles = opponent_profiles(policy.fallback, seats, pad, position)
+        fish_before = getattr(policy, 'overrides', 0)
         if isinstance(policy.fallback, GuardedEquityPolicy) and history_complete is not True:
             observation = replace(observation, history=())
-        if isinstance(policy, history_cfr.HistoryPolicy):
+        if isinstance(core_policy(policy), history_cfr.HistoryPolicy):
             action = stack_press.act(policy, observation, press, history_complete=history_complete is True)
         else:
             action = stack_press.act(policy, observation, press)
         covered = getattr(policy, 'covered', 0) > before
-        if getattr(policy, 'safeguards', 0) > safeguards_before:
+        if getattr(policy, 'overrides', 0) > fish_before:
+            source = 'fish_preflop'
+        elif getattr(policy, 'safeguards', 0) > safeguards_before:
             source = 'poker_safeguard'
         elif getattr(policy, 'pressure_overrides', 0) > overrides_before:
             source = 'pressure_guard'
@@ -142,7 +145,7 @@ def decision(snapshot, policy, public_history=(), history_complete=None):
     else:
         action = policy.act(observation)
     steal_detail = None
-    if isinstance(policy, history_cfr.HistoryPolicy) and isinstance(policy.fallback, GuardedEquityPolicyV3):
+    if isinstance(core_policy(policy), history_cfr.HistoryPolicy) and isinstance(policy.fallback, GuardedEquityPolicyV3):
         proposed = policy.fallback.late_position_open(
             observation, action, seats, snapshot['big_blind'], snapshot['pot'], wire,
             history_complete=history_complete)
@@ -154,12 +157,15 @@ def decision(snapshot, policy, public_history=(), history_complete=None):
     # Diagnostics for the optional session log; never sent on the wire.
     decision.last = dict(hand_id=hand, seat=hero['seat'], street=street, active=sum(observation.active),
                          covered=covered, decision_source=source, action=wire[action]['action'], amount=wire[action].get('amount'))
-    if isinstance(policy, history_cfr.HistoryPolicy):
+    if isinstance(core_policy(policy), history_cfr.HistoryPolicy):
         decision.last['history_verified'] = history_complete is True
         decision.last['history_length'] = len(public_history)
         decision.last['observation'] = asdict(observation)
     if press:
         decision.last['stack_press_sizes'] = list(press)
+    fish_seats = getattr(getattr(policy, 'fallback', None), 'fish_seats', None)
+    if fish_seats is not None:
+        decision.last['fish_seats'] = sorted(fish_seats)
     if steal_detail is not None:
         decision.last['late_position_steal'] = steal_detail
     if hasattr(policy, 'fallback') and profiles is not None:
@@ -171,6 +177,10 @@ def decision(snapshot, policy, public_history=(), history_complete=None):
                 client_action_id=str(uuid4()), **wire[action])
 
 
+# Triplo v8 --fish-exploit postflop settings (scripts/fish_field_benchmark.py).
+FISH_EXPLOIT = dict(fish_size={1: .75, 2: 1.0, 3: 1.25}, fish_raise=('top', .6))
+
+
 def opponent_profiles(fallback, seats, pad, position):
     """Install measured calling thresholds on an equity-guarded-v2 fallback.
 
@@ -178,16 +188,24 @@ def opponent_profiles(fallback, seats, pad, position):
     from ``fallback.opponent_stats``; opponents without enough observations are
     left out, which makes v2 keep v1's bet size. Returns None when not enabled.
     """
-    stats = getattr(fallback, 'opponent_stats', None)
-    if stats is None:
-        return None
     names = {}
     for i, s in enumerate(seats):
         p = i + pad if i >= 2 else i
         if p != position and not s['folded'] and s.get('name'):
             names[p] = s['name']
+    lookup = getattr(fallback, 'fish_lookup', None)
+    if lookup is not None:
+        fallback.fish_seats = {p for p, name in names.items() if lookup(name)}
+    stats = getattr(fallback, 'opponent_stats', None)
+    if stats is None:
+        return None
     fallback.profiles = stats.profiles(names)
     return fallback.profiles
+
+
+def core_policy(policy):
+    """The learned policy under an optional wrapper such as the --fish-exploit preflop layer."""
+    return getattr(policy, 'inner', policy)
 
 
 def active_game(key):
@@ -250,6 +268,10 @@ async def run(args, policy, key):
         avoider = StrongAvoider(mode, STRONG_BB100 if threshold is None else threshold,
                                 min_weak=getattr(args, 'min_weak', 0),
                                 max_strong=getattr(args, 'max_strong', None))
+        if getattr(args, 'fish_exploit', False):
+            # Fish are the seats the leaderboard marks weak; with no fresh field, nobody is.
+            policy.fallback.fish_lookup = lambda name: bool(avoider.field) and avoider.field.is_weak(
+                name, avoider.threshold)
     try:
         await _run(args, policy, key, avoider, tasks)
     finally:
@@ -364,7 +386,7 @@ async def _run(args, policy, key, avoider, tasks):
                             if identity not in pending:
                                 try:
                                     pending[identity] = decision(snapshot, policy, public_history, complete)
-                                    if isinstance(policy, history_cfr.HistoryPolicy):
+                                    if isinstance(core_policy(policy), history_cfr.HistoryPolicy):
                                         decision.last['history_reason'] = history.last_reason
                                 except (KeyError, ValueError, StopIteration) as exc:
                                     LOG.error('Cannot translate snapshot: %s', exc)
@@ -525,6 +547,10 @@ def main():
     parser.add_argument('--flop-peel', action='store_true',
                         help='v6-fast/v6-tight: call small/medium flop bets more often with draws, pairs and '
                              'heads-up overcards when the fallback would fold')
+    parser.add_argument('--fish-exploit', action='store_true',
+                        help='Triplo v8: against seats the leaderboard marks weak (no_code presets, losing bots): '
+                             'isolate their opens preflop, bet bigger for value and re-raise their flop/turn raises '
+                             'with top pair+; requires --avoid-strong and the v5 fallback')
     parser.add_argument('--turn-defend', action='store_true',
                         help='Triplo v7: call more heads-up turn probes (first turn bet from a player who '
                              'did not bet the flop) with pairs and draws; barrels and rivers unchanged')
@@ -566,6 +592,10 @@ def main():
         parser.error(f'--defend-3bet requires --fallback {VERSION_V4} or {VERSION_V5}')
     if args.flop_peel and args.fallback not in (VERSION_V4, VERSION_V5):
         parser.error(f'--flop-peel requires --fallback {VERSION_V4} or {VERSION_V5}')
+    if args.fish_exploit and args.fallback != VERSION_V5 and not args.river_solver:
+        parser.error(f'--fish-exploit requires --fallback {VERSION_V5}')
+    if args.fish_exploit and args.avoid_strong == 'off':
+        parser.error('--fish-exploit requires --avoid-strong report or leave (it reads the leaderboard)')
     for flag in ('turn_defend', 'turn_probe'):
         if getattr(args, flag) and args.fallback not in (VERSION_V4, VERSION_V5):
             parser.error(f'--{flag.replace("_", "-")} requires --fallback {VERSION_V4} or {VERSION_V5}')
@@ -618,7 +648,8 @@ def main():
                                                 solve_river=args.river_solver,
                                                 deep_value=args.deep_value,
                                                 defend_3bet=args.defend_3bet, flop_peel=args.flop_peel,
-                                                turn_defend=args.turn_defend, turn_probe=args.turn_probe)
+                                                turn_defend=args.turn_defend, turn_probe=args.turn_probe,
+                                                **(FISH_EXPLOIT if args.fish_exploit else {}))
             elif args.fallback == VERSION_V4:
                 policy.fallback = make_fallback(VERSION_V4, stack_press=args.stack_press,
                                                 deep_value=args.deep_value,
@@ -657,6 +688,11 @@ def main():
         stats = policy.fallback.opponent_stats
         LOG.info('Opponent stats: %d players, %d with >= %d faced postflop bets', len(stats.players),
                  sum(stats.faced(n) >= stats.min_faced for n in stats.players), stats.min_faced)
+    if args.fish_exploit:
+        from poker.fish_preflop import FishPreflop
+        policy = FishPreflop(policy, steal=False)
+        LOG.info('Fish Exploit: ON (leaderboard-weak seats: isolate opens, value sizing %s, re-raise %s)',
+                 FISH_EXPLOIT['fish_size'], FISH_EXPLOIT['fish_raise'])
     try:
         asyncio.run(run(args, policy, key))
     except KeyboardInterrupt:
