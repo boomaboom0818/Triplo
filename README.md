@@ -111,22 +111,23 @@ zero-sum equilibrium guarantees. No heads-up metric establishes multiplayer stre
 
 ## Deployment setups
 
-**Triplo v8-fast** (live trial) is v7-fast plus `--fish-exploit`, run with `--min-weak 3`: against
-seats the leaderboard marks weak (OpenPoker's `no_code` presets and losing bots) it isolates their
-opens, bets bigger for value and re-raises their flop/turn raises with top pair or better, and it
-leaves tables with fewer than three such seats. Simulated against a fish model fitted to 88,671 live
-`no_code` decisions it adds +8 to +64 BB/100 depending on the table, about +35 BB/100 overall with
-the table rule. See [Triplo v8](docs/TRIPLO-V8.md).
-
-**Frontier setup: Triplo v7-fast** (released as "v7"). This is what runs live on OpenPoker (requires the `openpoker` and `river-solver` extras):
+**Frontier setup: Triplo v8-fast** (live trial since 2026-11-24). This is what runs live on OpenPoker (requires the `openpoker` and `river-solver` extras):
 
 ```sh
 python -m scripts.openpoker_client --checkpoint runs/bot/pressure-fresh-001/base-guard.json \
   --min-visits 64 --buy-in 5000 --auto-rebuy --fallback equity-guarded-v5 \
   --stack-press --deep-value --no-learned-postflop --river-solver \
-  --defend-3bet --flop-peel --turn-defend --opponent-stats runs/bot/opponent-stats.json \
-  --avoid-strong leave --strong-bb100 220 --min-weak 2 --max-strong 1 --idle-timeout 300
+  --defend-3bet --flop-peel --turn-defend --fish-exploit --opponent-stats runs/bot/opponent-stats.json \
+  --avoid-strong leave --strong-bb100 220 --min-weak 3 --max-strong 1 --idle-timeout 300
 ```
+
+**Triplo v8-fast** is v7-fast plus `--fish-exploit`, run with `--min-weak 3` (v7 used 2): against
+seats the leaderboard marks weak (OpenPoker's `no_code` presets and losing bots) it isolates their
+opens, bets bigger for value and re-raises their flop/turn raises with top pair or better, and it
+leaves tables with fewer than three such seats. Simulated against a fish model fitted to 88,671 live
+`no_code` decisions it adds +8 to +64 BB/100 depending on the table, about +35 BB/100 overall with
+the table rule. Live confirmation needs roughly 10,000 hands. Dropping `--fish-exploit` and setting
+`--min-weak 2` gives **v7-fast**. See [Triplo v8](docs/TRIPLO-V8.md).
 
 **Triplo v7-fast** adds `--turn-defend` to v6-fast: heads-up, it calls a first turn bet from a player who
 did not bet the flop with pairs and draws instead of folding them. Live v6 folded 79% to these turn
