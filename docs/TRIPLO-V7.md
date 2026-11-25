@@ -85,3 +85,75 @@ Turn fold rate against `stab_exploiter`: 65.6% -> 55.9%. The spot is rare in the
 (most bots bet every flop), so most cells are unchanged. These are simulations; the scripted stab
 bot does not adapt like the real Doppio. Confirm live, and roll back by dropping `--turn-defend`.
 
+
+## Extended tests: v7-fast and v7-tight vs v6-fast and v6-tight
+
+Raw reports are in `runs/bot/v7-crossplay-001/` (not committed). All intervals are 95%.
+
+### Duplicate head-to-head (`scripts/triplo_v7_crossplay.py --tests h2h`)
+
+Three seats of each bot alternate, and every deal is replayed with the bots swapped, 32,768 deals
+(65,536 hands) per cell. BB/100 per seat for the first bot; the second loses the same amount.
+"Measured" uses fitted opponent profiles, "cold" none; "unequal" mixes 30-500 BB stacks around a
+250 BB hero seat.
+
+| Match | measured, unequal | measured, equal | cold, unequal | cold, equal |
+|---|---|---|---|---|
+| **v7-fast vs v6-fast** | -0.3 [-1.5, +0.8] | +0.0 [-1.9, +1.9] | +0.1 [-0.2, +0.4] | -0.4 [-0.5, -0.2] |
+| **v7-tight vs v6-tight** | +0.2 [-0.2, +0.6] | -0.4 [-0.9, +0.1] | -0.1 [-0.3, -0.0] | +0.1 [-0.2, +0.4] |
+| v7-fast vs v6-tight | -5.6 [-7.8, -3.5] | -1.7 [-5.3, +1.9] | -4.2 [-6.2, -2.1] | -1.8 [-5.1, +1.5] |
+| v7-tight vs v6-fast | +5.9 [+3.8, +7.9] | +2.2 [-1.4, +5.8] | +4.5 [+2.4, +6.6] | +3.4 [+0.2, +6.7] |
+| v7-fast vs v7-tight | -4.5 [-6.7, -2.3] | -1.2 [-4.8, +2.4] | -5.0 [-7.1, -2.9] | -2.2 [-5.4, +1.0] |
+| control: v6-tight vs v6-fast | +6.4 [+4.3, +8.5] | +2.9 [-0.7, +6.5] | +4.4 [+2.4, +6.3] | +2.3 [-1.0, +5.5] |
+
+### Substitution (`--tests sub`)
+
+One seat among five v6 bots, 8,192 paired deals per cell; paired difference against the same
+family's v6 build (same seat, same deals).
+
+| Field | Mode | v7-fast - v6-fast | v7-tight - v6-tight |
+|---|---|---|---|
+| 5x v6-fast | measured, unequal | +5.2 [-1.5, +11.8] | -5.4 [-14.1, +3.3] |
+| 5x v6-fast | measured, equal | +4.3 [-4.2, +12.8] | -3.4 [-9.3, +2.4] |
+| 5x v6-fast | cold, unequal | -0.0 [-1.0, +1.0] | +1.2 [-2.6, +5.0] |
+| 5x v6-fast | cold, equal | -0.2 [-1.2, +0.9] | +0.6 [-3.6, +4.9] |
+| 5x v6-tight | measured, unequal | +1.5 [-0.1, +3.1] | +0.1 [-0.8, +1.0] |
+| 5x v6-tight | measured, equal | +3.9 [-3.5, +11.3] | -1.2 [-2.9, +0.4] |
+| 5x v6-tight | cold, unequal | -0.3 [-1.8, +1.2] | +0.8 [-0.6, +2.2] |
+| 5x v6-tight | cold, equal | +0.1 [-0.2, +0.5] | 0.0 |
+| mixed v6 | measured, unequal | -6.2 [-13.6, +1.3] | +2.8 [-5.0, +10.7] |
+| mixed v6 | measured, equal | +9.6 [-3.7, +23.0] | -5.1 [-11.7, +1.5] |
+| mixed v6 | cold, unequal | +2.7 [-3.4, +8.7] | -0.6 [-3.0, +1.8] |
+| mixed v6 | cold, equal | -0.2 [-0.5, +0.1] | -0.7 [-1.6, +0.2] |
+
+### Scripted fields on fresh seeds (`scripts/v6_field_benchmark.py --seed 781000000`)
+
+16,384 paired deals per field, measured profiles / cold start, delta vs the same family's v6 build:
+
+| Field | v7-fast - v6-fast | v7-tight - v6-tight |
+|---|---|---|
+| sticky | 0.0 / 0.0 | 0.0 / 0.0 |
+| real_mix | 0.0 / 0.0 | 0.0 / 0.0 |
+| pressure | 0.0 / 0.0 | +0.6 [-2.8, +4.0] / +0.6 [-2.8, +4.0] |
+| turbo | -0.1 [-0.4, +0.1] / 0.0 | -0.4 [-1.0, +0.2] / -0.4 [-1.0, +0.2] |
+| hud_exploiter | -0.4 [-0.9, +0.1] / -0.4 [-0.9, +0.1] | -0.6 [-2.3, +1.2] / -0.6 [-2.3, +1.2] |
+| stab_exploiter | +1.3 [-1.0, +3.6] / +0.7 [-2.4, +3.8] | +0.7 [-2.6, +4.0] / +0.4 [-3.2, +4.1] |
+
+Turn fold rate against `stab_exploiter`: v6-fast 66.3% -> v7-fast 59.5%; v6-tight 62.2% -> v7-tight 55.2%.
+
+### Reading
+
+- In simulation, each v7 build plays like its v6 parent: every same-family comparison is within
+  about 1 BB/100 head-to-head and in the scripted fields. The one significant cell, -0.4
+  [-0.5, -0.2] for v7-fast vs v6-fast cold at equal stacks, is negligible.
+- The first screen's +8.2 [+2.9, +13.6] against `stab_exploiter` did not hold up: on 16,384 fresh
+  deals it is +1.3 [-1.0, +3.6]. `--turn-defend` lowers the turn fold rate as designed, but the
+  scripted bots rarely reach the spot (most bet every flop), so the simulated effect is small. The
+  case for it rests on the live leak (79% turn folds to stabs), which must be confirmed live.
+- The fast/tight gap carries over unchanged from v6 (control row: v6-tight beats v6-fast by the same
+  2-6 BB/100 as v7-tight beats v6-fast). Tight beats fast head-to-head at 250 BB,
+  while fast wins far more against weak fields (sticky +4,698 vs +3,475 BB/100, real_mix +433 vs
+  +282). v7-fast stays the live build for chip rate on soft tables.
+- Live, in its first 194 hands (2026-11-24 13:20-15:49 PST), `--turn-defend` did not fire: the
+  heads-up turn probes v7-fast faced were either called already by the v6 logic (pairs, draws) or
+  no-pair hands it still folds by design.
