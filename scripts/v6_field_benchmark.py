@@ -565,10 +565,10 @@ def _run_batch(task):
             hero = rng.randrange(6)
             lineup = list(rng.choice(STACK_PROFILES))
             rng.shuffle(lineup)
-            stacks = lineup.copy()
-            stacks.insert(hero, HERO_BUYIN_BB)
             tags = make_lineup(field, seed, hero)
             for name in arm_names:
+                stacks = lineup.copy()
+                stacks.insert(hero, _ARMS[name].get('hero_bb', HERO_BUYIN_BB))
                 bb, hud = play_one_hand(policies[name], seed, hero, stacks, tags, proc, prof_map, track_hud=True)
                 results[name].append(bb)
                 huds[name].update(hud)
@@ -701,6 +701,10 @@ ARM_PRESETS = {
     'v7_fast': {'fallback_kwargs': {'defend_3bet': True, 'flop_peel': True, 'turn_defend': True}},
     'v7_defend_probe': {'fallback_kwargs': {'defend_3bet': True, 'flop_peel': True, 'turn_defend': True, 'turn_probe': True}},
     'v7_tight': {'base': 'v5', 'fallback_kwargs': {'defend_3bet': True, 'flop_peel': True, 'turn_defend': True}},
+    # Each build at its live buy-in (v7-fast --buy-in 5000 = 250 BB, v7-tight --buy-in 1000 = 50 BB).
+    'v7_fast_250bb': {'fallback_kwargs': {'defend_3bet': True, 'flop_peel': True, 'turn_defend': True}, 'hero_bb': 250},
+    'v7_tight_50bb': {'base': 'v5', 'fallback_kwargs': {'defend_3bet': True, 'flop_peel': True, 'turn_defend': True},
+                      'hero_bb': 50},
 }
 
 

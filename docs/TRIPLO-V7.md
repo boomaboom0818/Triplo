@@ -157,3 +157,40 @@ Turn fold rate against `stab_exploiter`: v6-fast 66.3% -> v7-fast 59.5%; v6-tigh
 - Live, in its first 194 hands (2026-11-24 13:20-15:49 PST), `--turn-defend` did not fire: the
   heads-up turn probes v7-fast faced were either called already by the v6 logic (pairs, draws) or
   no-pair hands it still folds by design.
+
+## v7-fast vs v7-tight at their live buy-ins
+
+The tests above put both builds at 250 BB. Live, v7-fast buys in at 5,000 chips (250 BB) and v7-tight
+at 1,000 (50 BB).
+
+Duplicate head-to-head with each bot at its own buy-in in every seat it takes
+(`scripts/triplo_v7_crossplay.py --hero v7_fast --rivals v7_tight --buyin v7_fast=250
+--buyin v7_tight=50`), 32,768 deals per mode, BB/100 per seat for v7-fast:
+
+| Mode | v7-fast (250 BB) vs v7-tight (50 BB) |
+|---|---|
+| measured profiles | -2.1 [-3.7, -0.5] |
+| cold start | -2.9 [-4.6, -1.2] |
+
+Scripted fields, same deals and opponents, hero at its buy-in (`scripts/v6_field_benchmark.py
+--arms v7_fast_250bb v7_tight_50bb --seed 801000000`), 16,384 paired deals per field, BB/100
+(measured profiles / cold start):
+
+| Field | v7-fast at 250 BB | v7-tight at 50 BB | tight - fast |
+|---|---|---|---|
+| sticky | +4,796 / +3,701 | +1,368 / +1,348 | -3,428 [-3,607, -3,249] / -2,352 [-2,499, -2,206] |
+| real_mix | +460 / +356 | +166 / +163 | -294 [-344, -243] / -192 [-234, -151] |
+| pressure | +47 / +75 | +25 / +26 | -22.7 [-47.5, +2.1] / -48.7 [-73.1, -24.3] |
+| turbo | +40 / +27 | -7 / -3 | -46.5 [-75.3, -17.7] / -29.5 [-57.1, -2.0] |
+| hud_exploiter | -24 / -25 | -16 / -16 | +8.2 [-5.3, +21.7] / +9.0 [-3.3, +21.3] |
+| stab_exploiter | -18 / -18 | -12 / -14 | +5.6 [-8.1, +19.4] / +4.4 [-8.7, +17.5] |
+
+Reading: v7-tight wins the direct match, but at its live buy-ins v7-fast makes far more chips per
+hand against every field with weak or mixed players, by about 2,400-3,400 BB/100 against callers.
+v7-tight only does better against the two HUD-exploiter fields, and not significantly. For chip
+rate on the leaderboard, v7-fast stays the live build. v7-tight is the choice for a table of
+strong regulars that attack Triplo, where the 50 BB buy-in caps losses.
+
+v7-tight's postflop bets also include far more hands without top pair (36-50% of its bets in these
+fields, against 4-22% for v7-fast), because its learned policy still plays postflop. That is
+closer to the betting mix Doppio uses.

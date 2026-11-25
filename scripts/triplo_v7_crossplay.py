@@ -133,6 +133,7 @@ def calibrate(saved, hands):
 _SAVED = None
 _PROFILES = None
 _HERO = 'v7_fast'
+_BUYINS = {}  # bot tag -> fixed stack in BB (each bot at its own buy-in)
 
 
 def _h2h(task):
@@ -145,7 +146,8 @@ def _h2h(task):
         total = 0.
         for parity in (0, 1):
             tags = [_HERO if i % 2 == parity else rival for i in range(6)]
-            pay = play([pools[t][i] for i, t in enumerate(tags)], tags, seed, stacks, profiles)
+            seat_stacks = [_BUYINS.get(t, s) for t, s in zip(tags, stacks)]
+            pay = play([pools[t][i] for i, t in enumerate(tags)], tags, seed, seat_stacks, profiles)
             total += sum(p for p, t in zip(pay, tags) if t == _HERO)
         out.append(total / 6)  # per hero seat per hand, averaged over both rotations
     return out
@@ -185,7 +187,7 @@ def chunks(first, total, workers):
 
 
 def main():
-    global _SAVED, _PROFILES, _HERO
+    global _SAVED, _PROFILES, _HERO, _BUYINS
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--playable', type=Path, default=Path('/tmp/triplo-factorial-playable.json'),
                         help="cached playable checkpoint JSON with a 'policy' key")
@@ -197,9 +199,16 @@ def main():
     parser.add_argument('--hero', choices=BOTS, default='v7_fast', help='head-to-head hero')
     parser.add_argument('--tests', nargs='+', choices=('h2h', 'sub'), default=['h2h', 'sub'])
     parser.add_argument('--rivals', nargs='+', choices=BOTS, help='head-to-head rivals (default: every other bot)')
+    parser.add_argument('--buyin', action='append', default=[], metavar='BOT=BB',
+                        help='head-to-head: give a bot a fixed stack in every seat it takes, e.g. v7_tight=50')
+    parser.add_argument('--modes', nargs='+', choices=[m[0] for m in MODES], help='subset of modes to run')
     parser.add_argument('--out', type=Path, required=True)
     args = parser.parse_args()
     _HERO = args.hero
+    _BUYINS = {tag: int(bb) for tag, bb in (item.split('=') for item in args.buyin)}
+    if set(_BUYINS) - set(BOTS):
+        parser.error(f'--buyin bot must be one of {BOTS}')
+    modes = [m for m in MODES if not args.modes or m[0] in args.modes]
 
     t0 = perf_counter()
     _SAVED = json.loads(args.playable.read_text())['policy']
@@ -209,7 +218,7 @@ def main():
     with ProcessPoolExecutor(args.workers, mp_context=get_context('fork')) as pool:
         if 'h2h' in args.tests:
             print(f'\n== Duplicate head-to-head: {_HERO} BB/100 per seat (rival loses the same) ==', flush=True)
-        for m, (mode, unequal, measured) in enumerate(MODES if 'h2h' in args.tests else ()):
+        for m, (mode, unequal, measured) in enumerate(modes if 'h2h' in args.tests else ()):
             report['h2h'][mode] = {}
             for r, rival in enumerate(t for t in BOTS if t != _HERO):
                 if args.rivals and rival not in args.rivals:
@@ -221,7 +230,7 @@ def main():
                 print(f'  {mode:17s} {_HERO} vs {rival:8s} {fmt(report["h2h"][mode][rival])}', flush=True)
         if 'sub' in args.tests:
             print('\n== Substitution: hero seat among a field; each v7 minus each v6 build, paired ==', flush=True)
-        for m, (mode, unequal, measured) in enumerate(MODES if 'sub' in args.tests else ()):
+        for m, (mode, unequal, measured) in enumerate(modes if 'sub' in args.tests else ()):
             report['substitution'][mode] = {}
             for f, field in enumerate(SUB_FIELDS):
                 first = args.seed + 500_000 + m * 1_000_000 + f * 100_000
