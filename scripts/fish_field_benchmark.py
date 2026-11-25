@@ -69,6 +69,9 @@ EXTRA_ARMS = {
     # Triplo v8-fast exactly as --fish-exploit configures it (scripts.openpoker_client.FISH_EXPLOIT).
     'v8_fast': {'fallback_kwargs': dict(V7, fish_size={1: .75, 2: 1.0, 3: 1.25}, fish_raise=('top', .6)),
                 'preflop': dict(steal=False)},
+    # Triplo v8-tight: v7-tight (50 BB, learned postflop, no Stack Press) + --fish-exploit.
+    'v8_tight_50bb': {'base': 'v5', 'fallback_kwargs': dict(V7, fish_size={1: .75, 2: 1.0, 3: 1.25}, fish_raise=('top', .6)),
+                      'preflop': dict(steal=False), 'hero_bb': 50},
     'pf_default_size': {'fallback_kwargs': dict(V7, fish_size={1: .75, 2: 1.0, 3: 1.25}), 'preflop': {}},
 }
 

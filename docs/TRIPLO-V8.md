@@ -84,3 +84,31 @@ widening unopened opens ("steal", -11 to +5), removing turn/river bluffs against
 - The table-selection estimate assumes switching does not change which tables the server offers.
 - A live confirmation needs on the order of 10,000 hands, because one hand's result varies by
   about 20 BB.
+
+## v8-tight
+
+v8-tight is v7-tight plus `--fish-exploit`, run with `--min-weak 3`: 50 BB buy-in, `equity-guarded-v5`
+with `--river-solver`, learned postflop play, no Stack Press and no Deep Value sizing.
+
+```bash
+.venv/bin/python -m scripts.openpoker_client --checkpoint runs/bot/pressure-fresh-001/base-guard.json \
+  --min-visits 64 --buy-in 1000 --auto-rebuy --fallback equity-guarded-v5 --river-solver \
+  --defend-3bet --flop-peel --turn-defend --fish-exploit --opponent-stats runs/bot/opponent-stats.json \
+  --avoid-strong leave --strong-bb100 220 --min-weak 3 --max-strong 1 --idle-timeout 300
+```
+
+Drop `--fish-exploit` and set `--min-weak 2` to get v7-tight exactly. Arm `v8_tight_50bb` in
+`scripts/fish_field_benchmark.py`; v8-tight minus v7-tight, 32,768 paired deals per field, 95% intervals:
+
+| Table | v7-tight | v8-tight | difference (BB/100) |
+|---|---|---|---|
+| 5 fish | +81 | +114 | **+32.9 [+17.8, +48.0]** |
+| 4 fish, 1 regular | +71 | +96 | **+24.7 [+15.5, +33.8]** |
+| 3 fish, 2 regulars | +39 | +53 | **+13.9 [+8.1, +19.6]** |
+| 2 fish, 3 regulars | +30 | +32 | +2.4 [-1.2, +6.0] |
+
+An earlier 8,192-deal run agreed in direction but was not significant at any table. At a 50 BB stack the
+exploit wins less than v8-fast does (+8 to +64 BB/100 at 250 BB), and v8-tight's absolute rates stay far
+below v8-fast's at fish tables. Same limits as v8-fast apply: the fish model's hand selection is an
+assumption, simulated regulars are v7-fast copies, and a live check needs about 10,000 hands. v8-tight is
+not deployed.
