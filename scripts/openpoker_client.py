@@ -122,7 +122,6 @@ def decision(snapshot, policy, public_history=(), history_complete=None):
         from poker.equity_policy import GuardedEquityPolicy
         profiles = opponent_profiles(policy.fallback, seats, pad, position)
         fish_before = getattr(policy, 'overrides', 0)
-        opens_before = (getattr(policy, 'resized', 0), getattr(policy, 'limp_raises', 0))
         if isinstance(policy.fallback, GuardedEquityPolicy) and history_complete is not True:
             observation = replace(observation, history=())
         if isinstance(core_policy(policy), history_cfr.HistoryPolicy):
@@ -154,11 +153,6 @@ def decision(snapshot, policy, public_history=(), history_complete=None):
             target, steal_detail = proposed
             steal_detail.update(applied=True, baseline_source=source, baseline_covered=covered)
             action, source, covered = target, 'late_position_steal', False
-    if action not in wire and type(action) is int and 'raise' in offered:
-        # Triplo v9 sizes off the trained menu (bigger fish opens, small fish stabs) are
-        # normalized raise-to totals; send the nearest amount the server allows.
-        lo, hi = offered['raise']['min'], offered['raise']['max']
-        wire[action] = {'action': 'raise', 'amount': min(hi, max(lo, round(action * scale)))}
     LOG.info('Decision street=%s active=%s covered=%s action=%s',street,sum(observation.active),covered,wire[action]['action'])
     # Diagnostics for the optional session log; never sent on the wire.
     decision.last = dict(hand_id=hand, seat=hero['seat'], street=street, active=sum(observation.active),
@@ -174,8 +168,6 @@ def decision(snapshot, policy, public_history=(), history_complete=None):
         decision.last['fish_seats'] = sorted(fish_seats)
     if steal_detail is not None:
         decision.last['late_position_steal'] = steal_detail
-    if hasattr(policy, 'fallback') and (getattr(policy, 'resized', 0), getattr(policy, 'limp_raises', 0)) != opens_before:
-        decision.last['fish_open'] = getattr(policy, 'last_open', None)
     if hasattr(policy, 'fallback') and profiles is not None:
         decision.last['opponent_profiles'] = {str(p): [round(b, 3), round(k, 3)] for p, (b, k) in profiles.items()}
     equity_detail = getattr(getattr(policy, 'fallback', None), 'last', None)
@@ -187,26 +179,6 @@ def decision(snapshot, policy, public_history=(), history_complete=None):
 
 # Triplo v8 --fish-exploit postflop settings (scripts/fish_field_benchmark.py).
 FISH_EXPLOIT = dict(fish_size={1: .75, 2: 1.0, 3: 1.25}, fish_raise=('top', .6))
-
-
-def v9_fallback_options(args):
-    """Triplo v9 postflop options for the v5 fallback (empty when every v9 flag is off)."""
-    out = {}
-    if getattr(args, 'fish_stab', None) is not None:
-        out['fish_stab'] = (args.fish_stab, getattr(args, 'fish_stab_hands', 'all'))
-    if getattr(args, 'fish_value_cap', None) is not None:
-        out['fish_value_cap'] = args.fish_value_cap
-    return out
-
-
-def v9_preflop_options(args):
-    """Triplo v9 unopened-pot options for the FishPreflop layer (empty when off)."""
-    out = {}
-    if getattr(args, 'fish_open', None) is not None:
-        out.update(open_bb=args.fish_open, open_limper_bb=getattr(args, 'fish_open_limper', 1.0))
-    if getattr(args, 'raise_not_limp', None) is not None:
-        out['limp_raise'] = args.raise_not_limp
-    return out
 
 
 def opponent_profiles(fallback, seats, pad, position):
@@ -579,22 +551,6 @@ def main():
                         help='Triplo v8: against seats the leaderboard marks weak (no_code presets, losing bots): '
                              'isolate their opens preflop, bet bigger for value and re-raise their flop/turn raises '
                              'with top pair+; requires --avoid-strong and the v5 fallback')
-    parser.add_argument('--fish-open', type=float, metavar='BB',
-                        help='Triplo v9 (needs --fish-exploit): when every player left to act and every limper is a '
-                             'leaderboard fish, open to BB big blinds (+ --fish-open-limper per limper)')
-    parser.add_argument('--fish-open-limper', type=float, default=1.0, metavar='BB',
-                        help='Triplo v9: big blinds added to --fish-open per limper (default 1)')
-    parser.add_argument('--fish-stab', type=float, metavar='POT',
-                        help='Triplo v9 (needs --fish-exploit): bet this pot fraction when a fish checks to us '
-                             'heads-up on the flop and the fallback would check')
-    parser.add_argument('--fish-stab-hands', choices=('all', 'nopair'), default='all',
-                        help='Triplo v9: which checking hands --fish-stab bets (default all)')
-    parser.add_argument('--fish-value-cap', type=float, metavar='POT',
-                        help='Triplo v9 (needs --fish-exploit): cap Deep Value bets/raises at this pot fraction '
-                             'while any non-fish opponent remains (overbets only against all-fish pots)')
-    parser.add_argument('--raise-not-limp', type=float, metavar='SHARE',
-                        help='Triplo v9 (needs --fish-exploit): raise instead of open-limping with the top SHARE '
-                             'of hands (Chen rank) in unopened pots')
     parser.add_argument('--turn-defend', action='store_true',
                         help='Triplo v7: call more heads-up turn probes (first turn bet from a player who '
                              'did not bet the flop) with pairs and draws; barrels and rivers unchanged')
@@ -640,16 +596,6 @@ def main():
         parser.error(f'--fish-exploit requires --fallback {VERSION_V5}')
     if args.fish_exploit and args.avoid_strong == 'off':
         parser.error('--fish-exploit requires --avoid-strong report or leave (it reads the leaderboard)')
-    for flag in ('fish_open', 'fish_stab', 'fish_value_cap', 'raise_not_limp'):
-        value = getattr(args, flag)
-        if value is not None and not args.fish_exploit:
-            parser.error(f'--{flag.replace("_", "-")} requires --fish-exploit')
-        if value is not None and value <= 0:
-            parser.error(f'--{flag.replace("_", "-")} must be positive')
-    if args.fish_open is not None and not 2 <= args.fish_open <= 6:
-        parser.error('--fish-open must be 2..6 big blinds')
-    if args.raise_not_limp is not None and args.raise_not_limp > 1:
-        parser.error('--raise-not-limp is a share of hands (0..1]')
     for flag in ('turn_defend', 'turn_probe'):
         if getattr(args, flag) and args.fallback not in (VERSION_V4, VERSION_V5):
             parser.error(f'--{flag.replace("_", "-")} requires --fallback {VERSION_V4} or {VERSION_V5}')
@@ -703,8 +649,7 @@ def main():
                                                 deep_value=args.deep_value,
                                                 defend_3bet=args.defend_3bet, flop_peel=args.flop_peel,
                                                 turn_defend=args.turn_defend, turn_probe=args.turn_probe,
-                                                **(FISH_EXPLOIT if args.fish_exploit else {}),
-                                                **v9_fallback_options(args))
+                                                **(FISH_EXPLOIT if args.fish_exploit else {}))
             elif args.fallback == VERSION_V4:
                 policy.fallback = make_fallback(VERSION_V4, stack_press=args.stack_press,
                                                 deep_value=args.deep_value,
@@ -745,12 +690,9 @@ def main():
                  sum(stats.faced(n) >= stats.min_faced for n in stats.players), stats.min_faced)
     if args.fish_exploit:
         from poker.fish_preflop import FishPreflop
-        policy = FishPreflop(policy, steal=False, **v9_preflop_options(args))
+        policy = FishPreflop(policy, steal=False)
         LOG.info('Fish Exploit: ON (leaderboard-weak seats: isolate opens, value sizing %s, re-raise %s)',
                  FISH_EXPLOIT['fish_size'], FISH_EXPLOIT['fish_raise'])
-        LOG.info('Triplo v9: fish open %s (+%s/limper), raise-not-limp %s, fish stab %s (%s), fish value cap %s',
-                 args.fish_open, args.fish_open_limper, args.raise_not_limp, args.fish_stab,
-                 args.fish_stab_hands, args.fish_value_cap)
     try:
         asyncio.run(run(args, policy, key))
     except KeyboardInterrupt:
